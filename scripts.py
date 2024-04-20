@@ -45,19 +45,30 @@ def collect_all_validated_vulnerabilties(filepath):
     print(f'Saved {len(file)} vulnerable samples to {filepath}')
 
 def intersection_consistent_unique(dataset, filepath):
-    consistent = pd.read_csv(f'results/consistent_datasets/{dataset}.csv')
-    unique = pd.read_csv(f'results/unique_datasets/{dataset}.csv')
-    intersection = pd.merge(consistent, unique, how='inner', on=['UID'])
+    """
+    Combine the consistent and unique datasets found in results,
+    for a certain dataset, and save it as a csv
+
+    Example:
+    python scripts.py --script intersection_consistent_unique --dataset 'Devign' --output_filepath results/consistent_unique_datasets/Devign.csv
+    """
+    desired_fields = ['UID', 'Vulnerable', 'Function']
+    consistent = pd.read_csv(f'results/consistent_datasets/{dataset}.csv')[desired_fields]
+    unique = pd.read_csv(f'results/unique_datasets/{dataset}.csv')[desired_fields]
+    intersection = pd.merge(consistent, unique, how='inner', on=desired_fields)
     intersection.dropna(inplace=True)
     intersection.to_csv(filepath, mode='w', index=False, header=True)
-    
+
     print(f'{len(consistent)} consistent samples found, {len(unique)} unique samples found, {len(intersection)} consistent and unique samples found, saved to {filepath}')
 
 def export_to_jsonl(dataset_filepath, jsonl_filepath, jsonl_structure):
     """
     Convert a csv dataset to a jsonl dataset, converting columns to keys as described in jsonl_structure
+    
+    Example:
+    python scripts.py --script export_to_jsonl --output_filepath results/consistent_unique_datasets/Devign.jsonl --dataset_filepath results/consistent_unique_datasets/Devign.csv --jsonl_structure=code:Function,idx:UID,target:Vulnerable
     """
-    data =  pd.read_csv(dataset_filepath)
+    data = pd.read_csv(dataset_filepath)
     data2 = data[jsonl_structure.values()]
     # invert keys and values
     inv_structure = {v: k for k,v in jsonl_structure.items()}
@@ -66,7 +77,23 @@ def export_to_jsonl(dataset_filepath, jsonl_filepath, jsonl_structure):
     data2.to_json(path_or_buf=jsonl_filepath, orient='records', lines=True)
     print(f'Exported {dataset_filepath} to {jsonl_filepath} in jsonl format, matching these keys to columns: {jsonl_structure}')
 
+def filter_by_size(data_filepath, output_filepath, max, min):
+    """
+    Make a dataset that is filtered by function size
+    
+    Example:
+    python scripts.py --script filter_by_size --dataset_filepath=results/consistent_unique_datasets/Devign.csv --output_filepath=filtered_devign.csv --min_length=20 --max_length=1024
+    """
+    data = pd.read_csv(data_filepath)
+    start_length = len(data)
+    filtered_data = data.loc[data['Function'].str.len() < max]
+    length = len(filtered_data)
 
+    filtered_data = filtered_data.loc[data['Function'].str.len() > min]
+    min_length = len(filtered_data)
+    print(f'{length} samples are below {max} characters, {start_length - length} are {max} characters or more. {length-min_length} samples are at or below {min} characters')
+    filtered_data.to_csv(output_filepath, mode='w', index=False, header=True)
+    print(f'Saved {len(filtered_data)} samples to {output_filepath}')
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -77,6 +104,8 @@ def get_args():
     parser.add_argument("--jsonl_structure", type=lambda x: {k:v for k,v in (i.split(':') for i in x.split(','))},
     help='comma-separated json_key:csv_column pairs, e.g. code:Function,idx:ID,status:Vulnerable', default={})
     parser.add_argument("--overwrite", action="store_true", default=False)
+    parser.add_argument("--max_length", type=int, default=0)
+    parser.add_argument("--min_length", type=int, default=0)
 
     return parser.parse_args()
 
@@ -87,6 +116,7 @@ if __name__ == '__main__':
         'save_validated_vulns': save_validated_vulns,
         'export_to_jsonl': export_to_jsonl,
         'intersection_consistent_unique': intersection_consistent_unique,
+        'filter_by_size': filter_by_size,
     }
 
 
@@ -114,6 +144,14 @@ if __name__ == '__main__':
         if args.dataset == "":
             raise ValueError(f'--dataset must be included with {args.script}')
         intersection_consistent_unique(args.dataset, args.output_filepath)
+    elif (args.script == 'filter_by_size'):
+        if args.output_filepath == "":
+            raise ValueError(f'--ouput_filepath must be included with {args.script}')
+        if args.dataset_filepath == "":
+            raise ValueError(f'--dataset_filepath must be included with {args.script}')
+        if args.max_length == 0:
+            raise ValueError(f'--max_length must be included with {args.script}')
+        filter_by_size(args.dataset_filepath, args.output_filepath, args.max_length, args.min_length)
     else:
         raise ValueError(f'--script is {args.script}, but must be one of: {list(scripts.keys())}')
 
