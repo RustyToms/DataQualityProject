@@ -1,5 +1,8 @@
 # big files
 *.zip
-dq_analysis/datasets/datasets/*
+dq_analysis/datasets/*
 results/consistent_datasets/*
 results/unique_datasets/*
+
+#binaries
+*.cpython*
