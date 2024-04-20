@@ -1,6 +1,8 @@
 import pandas as pd
 from ast import literal_eval
 
+KNOWN_DATASETS = ['Big-Vul', 'D2A', 'Devign', 'Juliet', 'toy', 'Gen-C']
+
 class Data:
     """
     Load and manipulate a dataset
@@ -12,10 +14,9 @@ class Data:
         """
         Load a dataset.
         """
-        self.datasets = ['Big-Vul', 'D2A', 'Devign', 'Juliet', 'toy', 'Gen-C']
         # Supported options
-        if dataset not in self.datasets:
-            raise ValueError(f'{dataset} is not in available datasets: {self.datasets}')
+        if dataset not in KNOWN_DATASETS:
+            raise ValueError(f'{dataset} is not in available datasets: {KNOWN_DATASETS}')
 
         # Load the data
         self.data_name = dataset
