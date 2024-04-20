@@ -1,0 +1,5 @@
+# big files
+*.zip
+dq_analysis/datasets/datasets/*
+results/consistent_datasets/*
+results/unique_datasets/*
