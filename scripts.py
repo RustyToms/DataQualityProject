@@ -162,21 +162,29 @@ def make_jsonl_dataset(data_filepath, output_filepath, max=20000, min=0):
 
     # create the validated test set            
     test = collect_test_set()
-    # shuffle rows
-    test.sample(frac=1)
+
+    # filter the test set to the same max and min code length as training data
+    test_length = len(test)
+    test = test.loc[test['Function'].str.len() < max]
+    test = test.loc[test['Function'].str.len() > min]
+    print(f'Test samples filtered to be under {max} and over {min} characters. '+
+          f'{test_length} samples reduced to {len(test)} samples.')
     
     # load the dataset
     data = _filter_by_size(data_filepath, max, min)
-    # VERY IMPORTANT!! Filter out the tests from the training and test data
-    before = len(data)
+    # VERY IMPORTANT!! Filter out the test samples that are in the training data
+    # The below code, in combination with the max/min filtering, ensures that
+    # no test samples are from the same project as the training samples.
+    before = len(test)
     # flag the rows that are *only* in data and not also in test
-    data_with_tests = data.merge(test, on=['UID', 'Vulnerable', 'Function'], how='left', indicator=True)
+    tests_with_data = test.merge(data, on=['UID', 'Vulnerable', 'Function'], how='left', indicator=True)
     # Collect the rows that were *only* in data
-    data = data_with_tests[data_with_tests['_merge'] == 'left_only']
-    after = len(data)
-    print(f'{before-after} samples removed that were in the test set')
+    test = tests_with_data[tests_with_data['_merge'] == 'left_only']
+    after = len(test)
+    print(f'{before-after} test samples removed that were in the data set, {after} remaining')
 
     # shuffle rows
+    test.sample(frac=1)
     data.sample(frac=1)
     #split into train and eval sets
     if len(data) > 2500:
