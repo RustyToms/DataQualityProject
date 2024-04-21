@@ -6,8 +6,9 @@ from dq_analysis.datasets.data import Data, KNOWN_DATASETS
 from dq_analysis.attributes.consistency import get_consistent_dataset
 
 VALIDATED_SAMPLE_PATH = 'dq_analysis/datasets/all_validated.csv'
+NEEDED_FIELDS = ['ID', 'UID', 'Vulnerable', 'Function']
 
-def save_validated_vulns(dataset, filepath, overwrite=False):
+def save_validated_vulns(dataset, filepath='', overwrite=False, add_safe_samples=False):
     """
     Collect vulnerabilities that have been manually validated and referenced in sample.csv
     
@@ -16,13 +17,13 @@ def save_validated_vulns(dataset, filepath, overwrite=False):
       --output_filepath=dq_analysis/datasets/devign_validated.csv --overwrite
     """
     samplepath = f'dq_analysis/datasets/{dataset}/sample.csv'
-    desired_fields = ['ID', 'UID', 'Vulnerable', 'Function']
 
     if not os.path.isfile(samplepath):
         print(f'no file found at {samplepath} for {dataset} dataset')
-        return None
+        # Return empty dataframe with the proper columns
+        return pd.DataFrame(columns=NEEDED_FIELDS)
     
-    print(f'Collecting manually validated vulnerabilities from {dataset} and adding them to {filepath}')
+    print(f'Collecting manually validated vulnerabilities from {dataset}')
     data = Data(dataset).get_dataset()
 
     # Load manually inspected samples
@@ -31,32 +32,52 @@ def save_validated_vulns(dataset, filepath, overwrite=False):
 
     # Save only correctly labeled vulnerable samples
     correct = inspected.loc[inspected['Label'] == 1]
-    correct = correct[desired_fields]
+    correct = correct[NEEDED_FIELDS]
+    num_vulns = len(correct)
+    num_safe = 0
+
+    if add_safe_samples:
+        # Add safe samples in equal number to vulnerable samples
+        # shuffle rows
+        data.sample(frac=1)
+        safe = data.loc[data['Vulnerable'] == 0]
+        safe = safe.iloc[:len(correct)]
+        num_safe = len(safe)
+        correct = correct.merge(safe, how='outer', on=NEEDED_FIELDS)
+
 
     # add header if file doesn't exist yet or is being overwritten, otherwise append
-    if overwrite or not os.path.isfile(samplepath):
-        correct.to_csv(filepath, mode='w', index=False, header=True)
-    else:
-        existing = pd.read_csv(filepath)[desired_fields]
-        correct = correct.merge(existing, how='outer', on=desired_fields)
-        correct.to_csv(filepath, mode='w', index=False, header=True)
+    if filepath:
+        if overwrite or not os.path.isfile(filepath):
+            correct.to_csv(filepath, mode='w', index=False, header=True)
+        else:
+            existing = pd.read_csv(filepath)[NEEDED_FIELDS]
+            correct = correct.merge(existing, how='outer', on=NEEDED_FIELDS)
+            correct.to_csv(filepath, mode='w', index=False, header=True)
+        print(f'Wrote samples to {filepath}')
     
-    print(f'{len(correct)} vulnerable samples written to {filepath} from {dataset}')
+    print(f'Added {num_vulns} vulnerable samples and {num_safe} safe samples from {dataset}')
+    
+    return correct
 
-def collect_all_validated_vulnerabilities(filepath=VALIDATED_SAMPLE_PATH):
+def collect_test_set(filepath=""):
     """
     Cycle through all known datasets collecting validated vulnerability samples,
     write to a csv file
 
     Example:
-
+    python scripts.py --script collect_test_set
     """
-    is_first = True
-    for dataset in KNOWN_DATASETS:
-        save_validated_vulns(dataset, filepath, is_first)
-        is_first=False
-    file = pd.read_csv(filepath)
-    print(f'Saved {len(file)} vulnerable samples to {filepath}')
+    overwrite=True
+    add_safe_samples = True
+    test_set = save_validated_vulns(KNOWN_DATASETS[0], filepath, overwrite, add_safe_samples)
+    overwrite=False
+    for dataset in KNOWN_DATASETS[1:]:
+        new_set = save_validated_vulns(dataset, filepath, overwrite, add_safe_samples)
+        test_set = test_set.merge(new_set, how='outer', on=NEEDED_FIELDS)
+
+    print(f'Created {len(test_set)} test samples')
+    return test_set
 
 def intersection_consistent_unique(dataset, filepath):
     """
@@ -67,10 +88,9 @@ def intersection_consistent_unique(dataset, filepath):
     python scripts.py --script intersection_consistent_unique --dataset 'Devign' 
       --output_filepath results/consistent_unique_datasets/Devign.csv
     """
-    desired_fields = ['UID', 'Vulnerable', 'Function']
-    consistent = pd.read_csv(f'results/consistent_datasets/{dataset}.csv')[desired_fields]
-    unique = pd.read_csv(f'results/unique_datasets/{dataset}.csv')[desired_fields]
-    intersection = pd.merge(consistent, unique, how='inner', on=desired_fields)
+    consistent = pd.read_csv(f'results/consistent_datasets/{dataset}.csv')[NEEDED_FIELDS]
+    unique = pd.read_csv(f'results/unique_datasets/{dataset}.csv')[NEEDED_FIELDS]
+    intersection = pd.merge(consistent, unique, how='inner', on=NEEDED_FIELDS)
     intersection.dropna(inplace=True)
     intersection.to_csv(filepath, mode='w', index=False, header=True)
 
@@ -139,7 +159,23 @@ def make_jsonl_dataset(data_filepath, output_filepath, max=20000, min=0):
         'idx':'UID',
         'target':'Vulnerable',
     }
+
+    # create the validated test set            
+    test = collect_test_set()
+    # shuffle rows
+    test.sample(frac=1)
+    
+    # load the dataset
     data = _filter_by_size(data_filepath, max, min)
+    # VERY IMPORTANT!! Filter out the tests from the training and test data
+    before = len(data)
+    # flag the rows that are *only* in data and not also in test
+    data_with_tests = data.merge(test, on=['UID', 'Vulnerable', 'Function'], how='left', indicator=True)
+    # Collect the rows that were *only* in data
+    data = data_with_tests[data_with_tests['_merge'] == 'left_only']
+    after = len(data)
+    print(f'{before-after} samples removed that were in the test set')
+
     # shuffle rows
     data.sample(frac=1)
     #split into train and eval sets
@@ -147,19 +183,13 @@ def make_jsonl_dataset(data_filepath, output_filepath, max=20000, min=0):
         eval_length = 270
     else:
         eval_length = len(data)//10
+
     eval = data.iloc[:eval_length]
     train = data.iloc[eval_length:]
     print(f'eval length: {len(eval)}, train length: {len(train)}')
-    # save train and evaluation datasets
+    # save datasets
     export_to_jsonl("", f'{output_filepath}/train.jsonl', jsonl_structure, train)
     export_to_jsonl("", f'{output_filepath}/valid.jsonl', jsonl_structure, eval)
-
-    # get validated test set
-    # create the validated test set if it doesn't exist yet
-    if not os.path.isfile(VALIDATED_SAMPLE_PATH):
-        collect_all_validated_vulnerabilities(VALIDATED_SAMPLE_PATH)
-            
-    test = pd.read_csv(VALIDATED_SAMPLE_PATH)
     export_to_jsonl("", f'{output_filepath}/test.jsonl', jsonl_structure, test)
 
     print(f'Wrote {len(train)} training samples, {len(eval)} evaluation samples,'+
@@ -183,7 +213,7 @@ def get_args():
 if __name__ == '__main__':
     args = get_args()
     scripts= {
-        'collect_all_validated_vulnerabilities': collect_all_validated_vulnerabilities,
+        'collect_test_set': collect_test_set,
         'save_validated_vulns': save_validated_vulns,
         'export_to_jsonl': export_to_jsonl,
         'intersection_consistent_unique': intersection_consistent_unique,
@@ -191,11 +221,10 @@ if __name__ == '__main__':
     }
 
 
-    if (args.script == 'collect_all_validated_vulnerabilities'):
-        if len(args.output_filepath) > 0:
-            collect_all_validated_vulnerabilities(args.output_filepath)
-        else:
-            collect_all_validated_vulnerabilities()
+    if (args.script == 'collect_test_set'):
+        if args.output_filepath == "":
+            raise ValueError(f'--ouput_filepath must be included with {args.script}')
+        collect_test_set(args.output_filepath)
     elif (args.script == 'save_validated_vulns'):
         if args.output_filepath == "":
             raise ValueError(f'--ouput_filepath must be included with {args.script}')
