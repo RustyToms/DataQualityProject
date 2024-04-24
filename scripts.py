@@ -2,9 +2,11 @@ import sys
 import os.path
 import pandas as pd
 import argparse
+import json
 import numpy as np
 from dq_analysis.datasets.data import Data, KNOWN_DATASETS
 from dq_analysis.attributes.consistency import get_consistent_dataset
+from openai import OpenAI
 
 VALIDATED_SAMPLE_PATH = 'dq_analysis/datasets/all_validated.csv'
 NEEDED_FIELDS = ['ID', 'UID', 'Vulnerable', 'Function']
@@ -215,6 +217,39 @@ def make_jsonl_dataset(data_filepath, output_filepath, exclude_from_tests='', ma
     print(f'Wrote {len(train)} balanced training samples, {len(eval)} balanced evaluation samples,'+
         f'and {len(test)} balanced test samples to {output_filepath}')
 
+def openai_fix_vulns(dataset_filepath, output_filepath):
+    client = OpenAI()
+    data = pd.read_csv(dataset_filepath)
+    role = "You are an amazing cyber security expert and skilled coder. " \
+        "You will be given a list of security vulnerabilities and C code that contains one or " \
+        "more of each of the vulnerabilities, which you will fix. It is important to not change what the " \
+        "code does, to not change variable or function names, to not add new comments, " \
+        "and to keep code changes succinct while eliminating the vulnerability. " \
+        "You will only output JSON. The first field is 'analysis', with a brief description of " \
+        "which lines have the vulnerabilitie and how they will be repaired. " \
+        "The second field is 'code', containing the fixed code."
+    
+    for i in range(0,len(data)):
+        vulnerability_type = data.iloc[i]["Diagnosis"]
+        code = data.iloc[i]["Function"]
+        message = f"""Vulnerability types: {vulnerability_type}
+        
+        {code}"""
+        completion = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": role},
+                {"role": "user", "content": message}
+            ]
+        )
+        result = json.loads(completion.choices[0].message.content)
+        print(message)
+        print("***********Response***********")
+        print(result["analysis"])
+        print(result["code"])
+        data.iloc[i]["Function"] = result["code"]
+        data.to_csv(output_filepath, mode='w', index=False, header=True)
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -239,6 +274,7 @@ if __name__ == '__main__':
         'export_to_jsonl': export_to_jsonl,
         'intersection_consistent_unique': intersection_consistent_unique,
         'filter_by_size': filter_by_size,
+        'openai_fix_vulns': openai_fix_vulns,
     }
 
 
@@ -282,6 +318,12 @@ if __name__ == '__main__':
         if args.dataset_filepath == "":
             raise ValueError(f'--dataset_filepath must be included with {args.script}')
         make_jsonl_dataset(args.dataset_filepath, args.output_filepath, args.exclude_from_tests, args.max_length, args.min_length)
+    elif (args.script == 'openai_fix_vulns'):
+        if args.output_filepath == "":
+            raise ValueError(f'--ouput_filepath must be included with {args.script}')
+        if args.dataset_filepath == "":
+            raise ValueError(f'--dataset_filepath must be included with {args.script}')
+        openai_fix_vulns(args.dataset_filepath, args.output_filepath)
     else:
         raise ValueError(f'--script is {args.script}, but must be one of: {list(scripts.keys())}')
 
