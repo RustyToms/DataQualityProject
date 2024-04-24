@@ -4,7 +4,6 @@ dq_analysis/datasets/*
 results/consistent_datasets/*
 results/unique_datasets/*
 results/consistent_unique_datasets/*
-results/custom_datasets/*/
 
 #binaries
 *.cpython*
