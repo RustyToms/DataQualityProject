@@ -2,13 +2,14 @@ import sys
 import os.path
 import pandas as pd
 import argparse
+import numpy as np
 from dq_analysis.datasets.data import Data, KNOWN_DATASETS
 from dq_analysis.attributes.consistency import get_consistent_dataset
 
 VALIDATED_SAMPLE_PATH = 'dq_analysis/datasets/all_validated.csv'
 NEEDED_FIELDS = ['ID', 'UID', 'Vulnerable', 'Function']
 
-def save_validated_vulns(dataset, filepath='', overwrite=False, add_safe_samples=False):
+def save_validated_vulns(dataset, filepath='', overwrite=False, max=99999999, min=0, add_safe_samples=False):
     """
     Collect vulnerabilities that have been manually validated and referenced in sample.csv
     
@@ -33,6 +34,9 @@ def save_validated_vulns(dataset, filepath='', overwrite=False, add_safe_samples
     # Save only correctly labeled vulnerable samples
     correct = inspected.loc[inspected['Label'] == 1]
     correct = correct[NEEDED_FIELDS]
+    # filter the test set to the same max and min code length as training data
+    correct = correct.loc[correct['Function'].str.len() < max]
+    correct = correct.loc[correct['Function'].str.len() > min]
     num_vulns = len(correct)
     num_safe = 0
 
@@ -41,10 +45,11 @@ def save_validated_vulns(dataset, filepath='', overwrite=False, add_safe_samples
         # shuffle rows
         data.sample(frac=1)
         safe = data.loc[data['Vulnerable'] == 0]
-        safe = safe.iloc[:len(correct)]
+        safe = safe.iloc[:num_vulns]
         num_safe = len(safe)
+        print(f'Length safe: {num_safe}, length vulnerable: {len(correct)}')
         correct = correct.merge(safe, how='outer', on=NEEDED_FIELDS)
-
+        print(f'num total: {len(correct)}')
 
     # add header if file doesn't exist yet or is being overwritten, otherwise append
     if filepath:
@@ -60,7 +65,7 @@ def save_validated_vulns(dataset, filepath='', overwrite=False, add_safe_samples
     
     return correct
 
-def collect_test_set(filepath=""):
+def collect_test_set(filepath="", datasets=KNOWN_DATASETS, max=99999999, min=0):
     """
     Cycle through all known datasets collecting validated vulnerability samples,
     write to a csv file
@@ -70,10 +75,10 @@ def collect_test_set(filepath=""):
     """
     overwrite=True
     add_safe_samples = True
-    test_set = save_validated_vulns(KNOWN_DATASETS[0], filepath, overwrite, add_safe_samples)
+    test_set = save_validated_vulns(datasets[0], filepath, overwrite, max, min, add_safe_samples)
     overwrite=False
-    for dataset in KNOWN_DATASETS[1:]:
-        new_set = save_validated_vulns(dataset, filepath, overwrite, add_safe_samples)
+    for dataset in datasets[1:]:
+        new_set = save_validated_vulns(dataset, filepath, overwrite, max, min, add_safe_samples)
         test_set = test_set.merge(new_set, how='outer', on=NEEDED_FIELDS)
 
     print(f'Created {len(test_set)} test samples')
@@ -147,12 +152,12 @@ def filter_by_size(data_filepath, output_filepath, max, min):
     data.to_csv(output_filepath, mode='w', index=False, header=True)
     print(f'Saved {len(data)} samples to {output_filepath}')
 
-def make_jsonl_dataset(data_filepath, output_filepath, max=20000, min=0):
+def make_jsonl_dataset(data_filepath, output_filepath, exclude_from_tests='', max=20000, min=0):
     """
     Example:
     python scripts.py --script make_jsonl_dataset --max 1024 
         --dataset_filepath='results/consistent_unique_datasets/Devign.csv' 
-        --output_filepath='devign_filtered'
+        --output_filepath='devign_filtered' --exclude_from_tests=Devign
     """
     jsonl_structure = {
         'code':'Function',
@@ -160,48 +165,55 @@ def make_jsonl_dataset(data_filepath, output_filepath, max=20000, min=0):
         'target':'Vulnerable',
     }
 
-    # create the validated test set            
-    test = collect_test_set()
+    # create the validated test set
+    datasets = KNOWN_DATASETS
+    if exclude_from_tests in datasets:
+        datasets.remove(exclude_from_tests)
+    test = collect_test_set("", datasets, max, min)
+    test = test.iloc[np.random.permutation(len(test))]  # shuffle rows
 
-    # filter the test set to the same max and min code length as training data
-    test_length = len(test)
-    test = test.loc[test['Function'].str.len() < max]
-    test = test.loc[test['Function'].str.len() > min]
-    print(f'Test samples filtered to be under {max} and over {min} characters. '+
-          f'{test_length} samples reduced to {len(test)} samples.')
-    
     # load the dataset
     data = _filter_by_size(data_filepath, max, min)
-    # VERY IMPORTANT!! Filter out the test samples that are in the training data
-    # The below code, in combination with the max/min filtering, ensures that
-    # no test samples are from the same project as the training samples.
-    before = len(test)
-    # flag the rows that are *only* in data and not also in test
-    tests_with_data = test.merge(data, on=['UID', 'Vulnerable', 'Function'], how='left', indicator=True)
-    # Collect the rows that were *only* in data
-    test = tests_with_data[tests_with_data['_merge'] == 'left_only']
-    after = len(test)
-    print(f'{before-after} test samples removed that were in the data set, {after} remaining')
 
-    # shuffle rows
-    test.sample(frac=1)
-    data.sample(frac=1)
+    # Important! Make the dataset balanced
+    data.iloc[np.random.permutation(len(data))]  # shuffle rows
+    vulnerable_set = data.loc[data['Vulnerable'] == 1]
+    safe_set = data.loc[data['Vulnerable'] == 0]
+    if len(safe_set) > len(vulnerable_set):
+        safe_set = safe_set.iloc[:len(vulnerable_set)]
+    else:
+        vulnerable_set = vulnerable_set.iloc[:len(safe_set)]
+    # Combine equal sized safe and vulnerable sets
+    data = vulnerable_set.merge(safe_set, how='outer', on=NEEDED_FIELDS)
+    
     #split into train and eval sets
     if len(data) > 2500:
-        eval_length = 270
+        category_size = 135
     else:
-        eval_length = len(data)//10
+        category_size = len(data)//20
+    
+    # Collect equal number of safe and vulnerable samples
+    data.iloc[np.random.permutation(len(data))]  # shuffle rows
+    eval_vulnerable = data.loc[data['Vulnerable'] == 1].iloc[:category_size]
+    eval_safe = data.loc[data['Vulnerable'] == 0].iloc[:category_size]
+    eval = eval_vulnerable.merge(eval_safe, how='outer', on=NEEDED_FIELDS)
+    eval.iloc[np.random.permutation(len(eval))]  # shuffle rows
+    # flag the rows that are *only* in data and not also in eval
+    eval_with_data = data.merge(eval, on=['UID', 'Vulnerable', 'Function'], how='left', indicator=True)
+    # Collect the rows that were *only* in data
+    train = eval_with_data[eval_with_data['_merge'] == 'left_only']
 
-    eval = data.iloc[:eval_length]
-    train = data.iloc[eval_length:]
+    eval.iloc[np.random.permutation(len(eval))]  # shuffle rows
+    train.iloc[np.random.permutation(len(train))]  # shuffle rows
+
     print(f'eval length: {len(eval)}, train length: {len(train)}')
     # save datasets
     export_to_jsonl("", f'{output_filepath}/train.jsonl', jsonl_structure, train)
     export_to_jsonl("", f'{output_filepath}/valid.jsonl', jsonl_structure, eval)
     export_to_jsonl("", f'{output_filepath}/test.jsonl', jsonl_structure, test)
 
-    print(f'Wrote {len(train)} training samples, {len(eval)} evaluation samples,'+
-        f'and {len(test)} test samples to {output_filepath}')
+    print(f'Wrote {len(train)} balanced training samples, {len(eval)} balanced evaluation samples,'+
+        f'and {len(test)} balanced test samples to {output_filepath}')
 
 
 def get_args():
@@ -215,6 +227,7 @@ def get_args():
     parser.add_argument("--overwrite", action="store_true", default=False)
     parser.add_argument("--max_length", type=int, default=0)
     parser.add_argument("--min_length", type=int, default=0)
+    parser.add_argument("--exclude_from_tests", type=str, default="")
 
     return parser.parse_args()
 
@@ -268,7 +281,7 @@ if __name__ == '__main__':
             raise ValueError(f'--ouput_filepath must be included with {args.script}')
         if args.dataset_filepath == "":
             raise ValueError(f'--dataset_filepath must be included with {args.script}')
-        make_jsonl_dataset(args.dataset_filepath, args.output_filepath, args.max_length, args.min_length)
+        make_jsonl_dataset(args.dataset_filepath, args.output_filepath, args.exclude_from_tests, args.max_length, args.min_length)
     else:
         raise ValueError(f'--script is {args.script}, but must be one of: {list(scripts.keys())}')
 
