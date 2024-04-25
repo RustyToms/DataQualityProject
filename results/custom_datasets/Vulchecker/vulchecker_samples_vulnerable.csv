@@ -65,8 +65,7 @@ hhvm-HHVM-3.12.10-0,1,"['overflowed_variable','overflowed_call']","static String
   bc_free_num(&second);
   bc_free_num(&result);
   return ret;
-}
-"
+}"
 graphite2-1.3.5-2,1,"['heap_overflow']","Machine::Code::Code(bool is_constraint, const byte * bytecode_begin, const byte * const bytecode_end,
            uint8 pre_context, uint16 rule_length, const Silf & silf, const Face & face,
            enum passtype pt, byte * * const _out)
