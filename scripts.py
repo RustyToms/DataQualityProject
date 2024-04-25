@@ -220,36 +220,44 @@ def make_jsonl_dataset(data_filepath, output_filepath, exclude_from_tests='', ma
 def openai_fix_vulns(dataset_filepath, output_filepath):
     client = OpenAI()
     data = pd.read_csv(dataset_filepath)
+    model="gpt-4-turbo"
+    prompt_tokens = 0
+    completion_tokens = 0
     role = "You are an amazing cyber security expert and skilled coder. " \
-        "You will be given a list of security vulnerabilities and C code that contains one or " \
-        "more of each of the vulnerabilities, which you will fix. It is important to not change what the " \
-        "code does, to not change variable or function names, to not add new comments, " \
-        "and to keep code changes succinct while eliminating the vulnerability. " \
-        "You will only output JSON. The first field is 'analysis', with a brief description of " \
-        "which lines have the vulnerabilitie and how they will be repaired. " \
-        "The second field is 'code', containing the fixed code."
+        "You get a list of security vulnerabilities and C code that contains one or " \
+        "more of each vulnerability, which you will fix. Do NOT change what the " \
+        "code does, or variable or function names, or add new comments, " \
+        "and keep code changes succinct. But you MUST find and fix the vulnerability or vulnerabilities. " \
+        "Only output JSON. The first field is 'analysis', with a brief description of " \
+        "which lines have the vulnerabilities and how they will be fixed. " \
+        "The second field is 'code', containing the fixed code. Do not truncate any code, all code must be returned. Do not change whitespace or escaped characters, and match the existing indentation."
     
     for i in range(0,len(data)):
         vulnerability_type = data.iloc[i]["Diagnosis"]
         code = data.iloc[i]["Function"]
-        message = f"""Vulnerability types: {vulnerability_type}
-        
-        {code}"""
+        message = f"Vulnerability types: {vulnerability_type}\n\n{code}"
         completion = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model=model,
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": role},
                 {"role": "user", "content": message}
-            ]
+            ],
+            temperature=0.2, # max is 2, don't get creative, be correct
+            frequency_penalty=-0.5 # -2 to 2. Use negative value to encourage reuse of terms as we want code duplicated
         )
         result = json.loads(completion.choices[0].message.content)
+        completion_tokens += completion.usage.completion_tokens
+        prompt_tokens += completion.usage.prompt_tokens
+        print(f'***Item {i}, {data.iloc[i]["UID"]} ({completion.usage})***')
         print(message)
-        print("***********Response***********")
         print(result["analysis"])
         print(result["code"])
-        data.iloc[i]["Function"] = result["code"]
-        data.to_csv(output_filepath, mode='w', index=False, header=True)
+        data.at[i, "Function"] = result["code"]
+    
+    data.to_csv(output_filepath, mode='w', index=False, header=True)
+    print(f'Task complete, {len(data)} functions written to {output_filepath}, {prompt_tokens} ' +
+          f'prompt tokens used, {completion_tokens} completion tokens used with {model}')
 
 def get_args():
     parser = argparse.ArgumentParser()
