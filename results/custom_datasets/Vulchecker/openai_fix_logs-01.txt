@@ -1,0 +1,2774 @@
+Vulnerability types: ['freed_variable','first_free']
+
+void jas_free(void *ptr)
+{
+        JAS_DBGLOG(100, ("jas_free(%p)\n", ptr));
+        free(ptr);
+}
+***********Response (CompletionUsage(completion_tokens=106, prompt_tokens=204, total_tokens=310))***********
+The function 'jas_free' demonstrates the 'first_free' vulnerability where it logs a pointer before it is freed, which can result in a use-after-free if logging function has side effects on the pointer. The repair involves moving the logging line to after the free operation.
+
+void jas_free(void *ptr)
+{
+        free(ptr);
+        JAS_DBGLOG(100, ("jas_free(%p)\n", ptr));
+}
+Vulnerability types: ['overflowed_variable','overflowed_call']
+
+String StringUtil::Implode(const Variant& items, const String& delim,
+                           const bool checkIsContainer /* = true */) {
+  if (checkIsContainer && !isContainer(items)) {
+    throw_param_is_not_container();
+  }
+  int size = getContainerSize(items);
+  if (size == 0) return empty_string();
+
+  String* sitems = (String*)req::malloc(size * sizeof(String));
+  int len = 0;
+  int lenDelim = delim.size();
+  int i = 0;
+  for (ArrayIter iter(items); iter; ++iter) {
+    new (&sitems[i]) String(iter.second().toString());
+    len += sitems[i].size() + lenDelim;
+    i++;
+  }
+  len -= lenDelim; // always one delimiter less than count of items
+  assert(i == size);
+
+  String s = String(len, ReserveString);
+  char *buffer = s.mutableData();
+  const char *sdelim = delim.data();
+  char *p = buffer;
+  String &init_str = sitems[0];
+  int init_len = init_str.size();
+  memcpy(p, init_str.data(), init_len);
+  p += init_len;
+  sitems[0].~String();
+  for (int i = 1; i < size; i++) {
+    String &item = sitems[i];
+    memcpy(p, sdelim, lenDelim);
+    p += lenDelim;
+    int lenItem = item.size();
+    memcpy(p, item.data(), lenItem);
+    p += lenItem;
+    sitems[i].~String();
+  }
+  req::free(sitems);
+  assert(p - buffer == len);
+  s.setSize(len);
+  return s;
+}
+***********Response (CompletionUsage(completion_tokens=559, prompt_tokens=539, total_tokens=1098))***********
+{'line_10': "Overflow vulnerability due to a possible multiplication result exceeding the maximum value of 'int'. We will add checks to ensure the multiplication does not exceed INT_MAX.", 'line_17': "Potential overflow when calculating 'len', as the sum might exceed the limits of an int. Use a safe addition method to prevent integer overflow."}
+String StringUtil::Implode(const Variant& items, const String& delim,
+                           const bool checkIsContainer /* = true */) {
+  if (checkIsContainer && !isContainer(items)) {
+    throw_param_is_not_container();
+  }
+  int size = getContainerSize(items);
+  if (size == 0) return empty_string();
+
+  if (size > INT_MAX / sizeof(String)) throw std::overflow_error("Size calculation overflow");
+  String* sitems = (String*)req::malloc(size * sizeof(String));
+  int len = 0;
+  int lenDelim = delim.size();
+  int i = 0;
+  for (ArrayIter iter(items); iter; ++iter) {
+    new (&sitems[i]) String(iter.second().toString());
+    if (lenDelim > INT_MAX - len - sitems[i].size()) throw std::overflow_error("Length overflow");
+    len += sitems[i].size() + lenDelim;
+    i++;
+  }
+  len -= lenDelim; // always one delimiter less than count of items
+  assert(i == size);
+
+  String s = String(len, ReserveString);
+  char *buffer = s.mutableData();
+  const char *sdelim = delim.data();
+  char *p = buffer;
+  String &init_str = sitems[0];
+  int init_len = init_str.size();
+  memcpy(p, init_str.data(), init_len);
+  p += init_len;
+  sitems[0].~String();
+  for (int i = 1; i < size; i++) {
+    String &item = sitems[i];
+    memcpy(p, sdelim, lenDelim);
+    p += lenDelim;
+    int lenItem = item.size();
+    memcpy(p, item.data(), lenItem);
+    p += lenItem;
+    sitems[i].~String();
+  }
+  req::free(sitems);
+  assert(p - buffer == len);
+  s.setSize(len);
+  return s;
+}
+Vulnerability types: ['overflowed_variable','overflowed_call']
+
+static String HHVM_FUNCTION(bcadd, const String& left, const String& right,
+                            int64_t scale /* = -1 */) {
+  if (scale < 0) scale = BCG(bc_precision);
+  bc_num first, second, result;
+  bc_init_num(&first);
+  bc_init_num(&second);
+  bc_init_num(&result);
+  php_str2num(&first, (char*)left.data());
+  php_str2num(&second, (char*)right.data());
+  bc_add(first, second, &result, scale);
+  if (result->n_scale > scale) {
+    result->n_scale = scale;
+  }
+  String ret(bc_num2str(result), AttachString);
+  bc_free_num(&first);
+  bc_free_num(&second);
+  bc_free_num(&result);
+  return ret;
+}
+
+***********Response (CompletionUsage(completion_tokens=294, prompt_tokens=348, total_tokens=642))***********
+The code uses PHP string data types directly when transforming strings into numerical representations and processing mathematical operations which can lead to buffer overflows or incorrect behavior if not properly handled. Specifically, direct casts from String data to char* pointers and usage in subsequent functions can be risky. Modifications include changing how the data from the String object is passed to the php_str2num function to ensure that the data handling does not lead to vulnerabilities such as overflowed_variable or overflowed_call.
+static String HHVM_FUNCTION(bcadd, const String& left, const String& right,
+                            int64_t scale /* = -1 */) {
+  if (scale < 0) scale = BCG(bc_precision);
+  bc_num first, second, result;
+  bc_init_num(&first);
+  bc_init_num(&second);
+  bc_init_num(&result);
+  php_str2num(&first, left.c_str());
+  php_str2num(&second, right.c_str());
+  bc_add(first, second, &result, scale);
+  if (result->n_scale > scale) {
+    result->n_scale = scale;
+  }
+  String ret(bc_num2str(result), AttachString);
+  bc_free_num(&first);
+  bc_free_num(&second);
+  bc_free_num(&result);
+  return ret;
+}
+Vulnerability types: ['heap_overflow']
+
+Machine::Code::Code(bool is_constraint, const byte * bytecode_begin, const byte * const bytecode_end,
+           uint8 pre_context, uint16 rule_length, const Silf & silf, const Face & face,
+           enum passtype pt, byte * * const _out)
+ :  _code(0), _data(0), _data_size(0), _instr_count(0), _max_ref(0), _status(loaded),
+    _constraint(is_constraint), _modify(false), _delete(false), _own(_out==0)
+{
+#ifdef GRAPHITE2_TELEMETRY
+    telemetry::category _code_cat(face.tele.code);
+#endif
+    assert(bytecode_begin != 0);
+    if (bytecode_begin == bytecode_end)
+    {
+      // ::new (this) Code();
+      return;
+    }
+    assert(bytecode_end > bytecode_begin);
+    const opcode_t *    op_to_fn = Machine::getOpcodeTable();
+
+    // Allocate code and data target buffers, these sizes are a worst case
+    // estimate.  Once we know their real sizes the we'll shrink them.
+    if (_out)   _code = reinterpret_cast<instr *>(*_out);
+    else        _code = static_cast<instr *>(malloc(estimateCodeDataOut(bytecode_end-bytecode_begin)));
+    _data = reinterpret_cast<byte *>(_code + (bytecode_end - bytecode_begin));
+
+    if (!_code || !_data) {
+        failure(alloc_failed);
+        return;
+    }
+
+    decoder::limits lims = {
+        bytecode_end,
+        pre_context,
+        rule_length,
+        silf.numClasses(),
+        face.glyphs().numAttrs(),
+        face.numFeatures(),
+        {1,1,1,1,1,1,1,1,
+         1,1,1,1,1,1,1,255,
+         1,1,1,1,1,1,1,1,
+         1,1,1,1,1,1,0,0,
+         0,0,0,0,0,0,0,0,
+         0,0,0,0,0,0,0,0,
+         0,0,0,0,0,0,0, silf.numUser()}
+    };
+
+    decoder dec(lims, *this, pt);
+    if(!dec.load(bytecode_begin, bytecode_end))
+       return;
+
+    // Is this an empty program?
+    if (_instr_count == 0)
+    {
+      release_buffers();
+      ::new (this) Code();
+      return;
+    }
+
+    // When we reach the end check we've terminated it correctly
+    if (!is_return(_code[_instr_count-1])) {
+        failure(missing_return);
+        return;
+    }
+
+    assert((_constraint && immutable()) || !_constraint);
+    dec.apply_analysis(_code, _code + _instr_count);
+    _max_ref = dec.max_ref();
+
+    // Now we know exactly how much code and data the program really needs
+    // realloc the buffers to exactly the right size so we don't waste any
+    // memory.
+    assert((bytecode_end - bytecode_begin) >= ptrdiff_t(_instr_count));
+    assert((bytecode_end - bytecode_begin) >= ptrdiff_t(_data_size));
+    memmove(_code + (_instr_count+1), _data, _data_size*sizeof(byte));
+    size_t const total_sz = ((_instr_count+1) + (_data_size + sizeof(instr)-1)/sizeof(instr))*sizeof(instr);
+    if (_out)
+        *_out += total_sz;
+    else
+        _code = static_cast<instr *>(realloc(_code, total_sz));
+   _data = reinterpret_cast<byte *>(_code + (_instr_count+1));
+
+    if (!_code)
+    {
+        failure(alloc_failed);
+        return;
+    }
+
+    // Make this RET_ZERO, we should never reach this but just in case ...
+    _code[_instr_count] = op_to_fn[RET_ZERO].impl[_constraint];
+
+#ifdef GRAPHITE2_TELEMETRY
+    telemetry::count_bytes(_data_size + (_instr_count+1)*sizeof(instr));
+#endif
+}
+***********Response (CompletionUsage(completion_tokens=1169, prompt_tokens=1054, total_tokens=2223))***********
+{'line 28': 'Heap overflow vulnerability. On allocating `_code`, there needs to be sufficient space for `_data` to avoid buffer overflow when accessing or moving `_data`. This was previously only allocating enough space based on the size difference of `bytecode_begin` and `bytecode_end` which could be insufficient.', 'line 72': 'Using the `memmove` operation at this point with incorrect pointers can lead to undesired memory operations due to misaligned `_data` pointer. Correction will involve calculating correct buffer sizes required for `_code` and `_data` in the earlier allocation point.'}
+Machine::Code::Code(bool is_constraint, const byte * bytecode_begin, const byte * const bytecode_end,
+           uint8 pre_context, uint16 rule_length, const Silf & silf, const Face & face,
+           enum passtype pt, byte * * const _out)
+ :  _code(0), _data(0), _data_size(0), _instr_count(0), _max_ref(0), _status(loaded),
+    _constraint(is_constraint), _modify(false), _delete(false), _own(_out==0)
+{
+#ifdef GRAPHITE2_TELEMETRY
+    telemetry::category _code_cat(face.tele.code);
+#endif
+    assert(bytecode_begin != 0);
+    if (bytecode_begin == bytecode_end)
+    {
+      // ::new (this) Code();
+      return;
+    }
+    assert(bytecode_end > bytecode_begin);
+    const opcode_t *    op_to_fn = Machine::getOpcodeTable();
+
+    // Allocate code and data target buffers, these sizes are a worst case
+    // estimate.  Once we know their real sizes the we'll shrink them.
+    if (_out)   _code = reinterpret_cast<instr *>(*_out);
+    else        {
+        size_t total_estimated_size = ((bytecode_end - bytecode_begin) * 2 + sizeof(instr) - 1) / sizeof(instr) * sizeof(instr);
+        _code = static_cast<instr *>(malloc(total_estimated_size));
+        _data = reinterpret_cast<byte *>(_code + (bytecode_end - bytecode_begin));
+    }
+
+    if (!_code || !_data) {
+        failure(alloc_failed);
+        return;
+    }
+
+    decoder::limits lims = {
+        bytecode_end,
+        pre_context,
+        rule_length,
+        silf.numClasses(),
+        face.glyphs().numAttrs(),
+        face.numFeatures(),
+        {1,1,1,1,1,1,1,1,
+         1,1,1,1,1,1,1,255,
+         1,1,1,1,1,1,1,1,
+         1,1,1,1,1,1,0,0,
+         0,0,0,0,0,0,0,0,
+         0,0,0,0,0,0,0,0,
+         0,0,0,0,0,0,0, silf.numUser()}
+    };
+
+    decoder dec(lims, *this, pt);
+    if(!dec.load(bytecorecode_begin, bytecode_end))
+       return;
+
+    // Is this an empty program?
+    if (_instr_count == 0)
+    {
+      release_buffers();
+      ::new (this) Code();
+      return;
+    }
+
+    // When we reach the end check we've terminated it correctly
+    if (!is_return(_code[_instr_count-1])) {
+        failure(missing_return);
+        return;
+    }
+
+    assert((_constraint && immutable()) || !_constraint);
+    dec.apply_analysis(_code, _code + _instr_count);
+    _max_ref = dec.max_ref();
+
+    // Now we know exactly how much code and data the program really needs
+    // realloc the buffers to exactly the right size so we don't waste any
+    // memory.
+    assert((bytecode_end - bytecode_begin) >= ptrdiff_t(_instr_count));
+    assert((bytecode_end - bytecode_begin) >= ptrdiff_t(_data_size));
+    memmove(_code + (_instr_count+1), _data, _data_size*sizeof(byte));
+    size_t const total_sz = ((_instr_count+1) + (_data_size + sizeof(instr)-1)/sizeof(instr))*sizeof(instr);
+    if (_out)
+        *_out += total_sz;
+    else
+        _code = static_cast<instr *>(realloc(_code, total_sz));
+   _data = reinterpret_cast<byte *>(_code + (_instr_count+1));
+
+    if (!_code)
+    {
+        failure(alloc_failed);
+        return;
+    }
+
+    // Make this RET_ZERO, we should never reach this but just in case ...
+    _code[_instr_count] = op_to_fn[RET_ZERO].impl[_constraint];
+
+#ifdef GRAPHITE2_TELEMETRY
+    telemetry::count_bytes(_data_size + (_instr_count+1)*sizeof(instr));
+#endif
+}
+Vulnerability types: ['heap_overflow']
+
+void Slot::setAttr(Segment *seg, attrCode ind, uint8 subindex, int16 value, const SlotMap & map)
+{
+    if (ind == gr_slatUserDefnV1)
+    {
+        ind = gr_slatUserDefn;
+        subindex = 0;
+    }
+    else if (ind >= gr_slatJStretch && ind < gr_slatJStretch + 20 && ind != gr_slatJWidth)
+    {
+        int indx = ind - gr_slatJStretch;
+        return setJustify(seg, indx / 5, indx % 5, value);
+    }
+
+    switch (ind)
+    {
+    case gr_slatAdvX :  m_advance.x = value; break;
+    case gr_slatAdvY :  m_advance.y = value; break;
+    case gr_slatAttTo :
+    {
+        const uint16 idx = uint16(value);
+        if (idx < map.size() && map[idx])
+        {
+            Slot *other = map[idx];
+            if (other == this || other == m_parent) break;
+            if (m_parent) m_parent->removeChild(this);
+            if (!other->isChildOf(this) && other->child(this))
+            {
+                attachTo(other);
+                if ((map.dir() != 0) ^ (idx > subindex))
+                    m_with = Position(advance(), 0);
+                else        // normal match to previous root
+                    m_attach = Position(other->advance(), 0);
+            }
+        }
+        break;
+    }
+    case gr_slatAttX :          m_attach.x = value; break;
+    case gr_slatAttY :          m_attach.y = value; break;
+    case gr_slatAttXOff :
+    case gr_slatAttYOff :       break;
+    case gr_slatAttWithX :      m_with.x = value; break;
+    case gr_slatAttWithY :      m_with.y = value; break;
+    case gr_slatAttWithXOff :
+    case gr_slatAttWithYOff :   break;
+    case gr_slatAttLevel :
+        m_attLevel = byte(value);
+        break;
+    case gr_slatBreak :
+        seg->charinfo(m_original)->breakWeight(value);
+        break;
+    case gr_slatCompRef :   break;      // not sure what to do here
+    case gr_slatDir : break;
+    case gr_slatInsert :
+        markInsertBefore(value? true : false);
+        break;
+    case gr_slatPosX :      break; // can't set these here
+    case gr_slatPosY :      break;
+    case gr_slatShiftX :    m_shift.x = value; break;
+    case gr_slatShiftY :    m_shift.y = value; break;
+    case gr_slatMeasureSol :    break;
+    case gr_slatMeasureEol :    break;
+    case gr_slatJWidth :    just(value); break;
+    case gr_slatSegSplit :  seg->charinfo(m_original)->addflags(value & 3); break;
+    case gr_slatUserDefn :  m_userAttr[subindex] = value; break;
+    case gr_slatColFlags :  {
+        SlotCollision *c = seg->collisionInfo(this);
+        if (c)
+            c->setFlags(value);
+        break; }
+    case gr_slatColLimitblx :   SLOTCOLSETCOMPLEXATTR(Rect, limit(), setLimit(Rect(Position(value, s.bl.y), s.tr)))
+    case gr_slatColLimitbly :   SLOTCOLSETCOMPLEXATTR(Rect, limit(), setLimit(Rect(Position(s.bl.x, value), s.tr)))
+    case gr_slatColLimittrx :   SLOTCOLSETCOMPLEXATTR(Rect, limit(), setLimit(Rect(s.bl, Position(value, s.tr.y))))
+    case gr_slatColLimittry :   SLOTCOLSETCOMPLEXATTR(Rect, limit(), setLimit(Rect(s.bl, Position(s.tr.x, value))))
+    case gr_slatColMargin :             SLOTCOLSETATTR(setMargin(value))
+    case gr_slatColMarginWt :   SLOTCOLSETATTR(setMarginWt(value))
+    case gr_slatColExclGlyph :  SLOTCOLSETATTR(setExclGlyph(value))
+    case gr_slatColExclOffx :   SLOTCOLSETCOMPLEXATTR(Position, exclOffset(), setExclOffset(Position(value, s.y)))
+    case gr_slatColExclOffy :   SLOTCOLSETCOMPLEXATTR(Position, exclOffset(), setExclOffset(Position(s.x, value)))
+    case gr_slatSeqClass :              SLOTCOLSETATTR(setSeqClass(value))
+        case gr_slatSeqProxClass :      SLOTCOLSETATTR(setSeqProxClass(value))
+    case gr_slatSeqOrder :              SLOTCOLSETATTR(setSeqOrder(value))
+    case gr_slatSeqAboveXoff :  SLOTCOLSETATTR(setSeqAboveXoff(value))
+    case gr_slatSeqAboveWt :    SLOTCOLSETATTR(setSeqAboveWt(value))
+    case gr_slatSeqBelowXlim :  SLOTCOLSETATTR(setSeqBelowXlim(value))
+    case gr_slatSeqBelowWt :    SLOTCOLSETATTR(setSeqBelowWt(value))
+    case gr_slatSeqValignHt :   SLOTCOLSETATTR(setSeqValignHt(value))
+    case gr_slatSeqValignWt :   SLOTCOLSETATTR(setSeqValignWt(value))
+    default :
+        break;
+    }
+}
+***********Response (CompletionUsage(completion_tokens=1251, prompt_tokens=1361, total_tokens=2612))***********
+{'description': 'The code attempts to modify the m_userAttr array indexed by subindex without checking if the subindex is within bounds, causing potential heap overflow.', 'vulnerable_line': 'm_userAttr[subindex] = value;', 'fix_strategy': 'Add a condition to check if subindex is less than the size of m_userAttr before updating its value.'}
+void Slot::setAttr(Segment *seg, attrCode ind, uint8 subindex, int16 value, const SlotMap & map)
+{
+    if (ind == gr_slatUserDefnV1)
+    {
+        ind = gr_slatUserDefn;
+        subindex = 0;
+    }
+    else if (ind >= gr_slatJStretch && ind < gr_slatJStretch + 20 && ind != gr_slatJWidth)
+    {
+        int indx = ind - gr_slatJStretch;
+        return setJustify(seg, indx / 5, indx % 5, value);
+    }
+
+    switch (ind)
+    {
+    case gr_slatAdvX :  m_advance.x = value; break;
+    case gr_slatAdvY :  m_advance.y = value; break;
+    case gr_slatAttTo :
+    {
+        const uint16 idx = uint16(value);
+        if (idx < map.size() && map[idx])
+        {
+            Slot *other = map[idx];
+            if (other == this || other == m_parent) break;
+            if (m_parent) m_parent->removeChild(this);
+            if (!other->isChildOf(this) && other->child(this))
+            {
+                attachTo(other);
+                if ((map.dir() != 0) ^ (idx > subindex))
+                    m_with = Position(advance(), 0);
+                else        // normal match to previous root
+                    m_attach = Position(other->advance(), 0);
+            }
+        }
+        break;
+    }
+    case gr_slatAttX :          m_attach.x = value; break;
+    case gr_slatAttY :          m_attach.y = value; break;
+    case gr_slatAttXOff :
+    case gr_slatAttYOff :       break;
+    case gr_slatAttWithX :      m_with.x = value; break;
+    case gr_slatAttWithY :      m_with.y = value; break;
+    case gr_slatAttWithXOff :
+    case gr_slatAttWithYOff :   break;
+    case gr_slatAttLevel :
+        m_attLevel = byte(value);
+        break;
+    case gr_slatBreak :
+        seg->charinfo(m_original)->breakWeight(value);
+        break;
+    case gr_slatCompRef :   break;      // not sure what to do here
+    case gr_slatDir : break;
+    case gr_slatInsert :
+        markInsertBefore(value? true : false);
+        break;
+    case gr_slatPosX :      break; // can't set these here
+    case gr_slatPosY :      break;
+    case gr_slatShiftX :    m_shift.x = value; break;
+    case gr_slatShiftY :    m_shift.y = value; break;
+    case gr_slatMeasureSol :    break;
+    case gr_slatMeasureEol :    break;
+    case gr_slatJWidth :    just(value); break;
+    case gr_slatSegSplit :  seg->charinfo(m_original)->addflags(value & 3); break;
+    case gr_slatUserDefn :  if (subindex < USER_ATTR_SIZE) {m_userAttr[subindex] = value;} break;
+    case gr_slatColFlags :  {
+        SlotCollision *c = seg->collisionInfo(this);
+        if (c)
+            c->setFlags(value);
+        break; }
+    case gr_slatColLimitblx :   SLOTCOLSETCOMPLEXATTR(Rect, limit(), setLimit(Rect(Position(value, s.bl.y), s.tr)))
+    case gr_slatColLimit...
+    case gr_slatColMargin :             SLOTCOLSETATTR(setMargin(value))
+    case gr_slatColMarginWt :   SLOTCOLSETATTR(setMarginWt(value))
+    case gr_slatColExclGlyph :  SLOTCOLSETATTR(setExclGlyph(value))
+    case gr_slatColExclOffx :   SLOTCOLSETCOMPLEXATTR(Position, exclOffset(), setExclOffset(Position(value, s.y)))
+    case gr_slatColExclOffy :   SLOTCOLSETCOMPLEXATTR(Position, exclOffset(), setExclOffset(Position(s.x, value)))
+    case gr_slatSeqClass :              SLOTCOLSETATTR(setSeqClass(value))
+        case gr_slatSeqProxClass :      SLOTCOLSETATTR(setSeqProxClass(value))
+    case gr_slatSeqOrder :              SLOTCOLSETATTR(setSeqOrder(value))
+    case gr_slatSeqAboveXoff ...
+    case gr_slatSeqBelowWt :    SLOTCOLSETATTR(setSeqBelowWt(value))
+    case gr_slatSeqValignHt :   SLOTCOLSETATTR(setSeqValignHt(value))
+    case gr_slatSeqValignWt :   SLOTCOLSETATTR(setSeqValignWt(value))
+    default :
+        break;
+    }
+}
+Vulnerability types: ['declared_buffer']
+
+template <typename T> T * grzeroalloc(size_t n)
+{
+#ifdef GRAPHITE2_TELEMETRY
+    telemetry::count_bytes(sizeof(T) * n);
+#endif
+    return static_cast<T*>(calloc(n, sizeof(T)));
+}
+***********Response (CompletionUsage(completion_tokens=162, prompt_tokens=221, total_tokens=383))***********
+{'declared_buffer': "The function template 'grzeroalloc' does not include a check to ensure that the product of 'sizeof(T) * n' does not result in an integer overflow, which can lead to improper memory allocation. To fix this, we add a check to ensure 'n' does not exceed a maximum allowable value when multiplied by 'sizeof(T)'."}
+template <typename T> T * grzeroalloc(size_t n)
+{
+#ifdef GRAPHITE2_TELEMETRY
+    telemetry::count_bytes(sizeof(T) * n);
+#endif
+    if (n > SIZE_MAX / sizeof(T)) return nullptr;
+    return static_cast<T*>(calloc(n, sizeof(T)));
+}
+Vulnerability types: ['overflowed_call']
+
+void update_recv_order(rdpUpdate* update, STREAM* s)
+{
+        uint8 controlFlags;
+
+        stream_read_uint8(s, controlFlags); /* controlFlags (1 byte) */
+
+        if (!(controlFlags & ORDER_STANDARD))
+                update_recv_altsec_order(update, s, controlFlags);
+        else if (controlFlags & ORDER_SECONDARY)
+                update_recv_secondary_order(update, s, controlFlags);
+        else
+                update_recv_primary_order(update, s, controlFlags);
+}
+***********Response (CompletionUsage(completion_tokens=249, prompt_tokens=266, total_tokens=515))***********
+The code contains a function that reads a byte from a stream and uses it as a control flag to determine which function call should be executed. The vulnerability resides in how the control flags are used to determine the path of execution without ensuring that only valid paths are taken, possibly leading to undefined behaviors or the execution of incorrect functions. Lines responsible include all conditional checks (lines with 'if' and 'else if'). The fix involves masking controlFlags with bitmask to ensure that only valid combinations of ORDER_STANDARD and ORDER_SECONDARY are processed, avoiding any potential unexpected behavior.
+void update_recv_order(rdpUpdate* update, STREAM* s)
+{
+        uint8 controlFlags;
+
+        stream_read_uint8(s, controlFlags); /* controlFlags (1 byte) */
+
+        if (!(controlFlags & ORDER_STANDARD))
+                update_recv_altsec_order(update, s, controlFlags);
+        else if ((controlFlags & ORDER_SECONDARY) && (controlFlags & ORDER_STANDARD))
+                update_recv_secondary_order(update, s, controlFlags);
+        else
+                update_recv_primary_order(update, s, controlFlags);
+}
+Vulnerability types: ['overflowed_variable']
+
+void update_recv_secondary_order(rdpUpdate* update, STREAM* s, uint8 flags)
+{
+        uint8* next;
+        uint8 orderType;
+        uint16 extraFlags;
+        uint16 orderLength;
+        rdpContext* context = update->context;
+        rdpSecondaryUpdate* secondary = update->secondary;
+
+        stream_read_uint16(s, orderLength); /* orderLength (2 bytes) */
+        stream_read_uint16(s, extraFlags); /* extraFlags (2 bytes) */
+        stream_read_uint8(s, orderType); /* orderType (1 byte) */
+
+        next = s->p + ((sint16) orderLength) + 7;
+
+#ifdef WITH_DEBUG_ORDERS
+        if (orderType < SECONDARY_DRAWING_ORDER_COUNT)
+                printf("%s Secondary Drawing Order (0x%02X)\n", SECONDARY_DRAWING_ORDER_STRINGS[orderType], orderType);
+        else
+                printf("Unknown Secondary Drawing Order (0x%02X)\n", orderType);
+#endif
+
+        switch (orderType)
+        {
+                case ORDER_TYPE_BITMAP_UNCOMPRESSED:
+                        update_read_cache_bitmap_order(s, &(secondary->cache_bitmap_order), false, extraFlags);
+                        IFCALL(secondary->CacheBitmap, context, &(secondary->cache_bitmap_order));
+                        break;
+
+                case ORDER_TYPE_CACHE_BITMAP_COMPRESSED:
+                        update_read_cache_bitmap_order(s, &(secondary->cache_bitmap_order), true, extraFlags);
+                        IFCALL(secondary->CacheBitmap, context, &(secondary->cache_bitmap_order));
+                        break;
+
+                case ORDER_TYPE_BITMAP_UNCOMPRESSED_V2:
+                        update_read_cache_bitmap_v2_order(s, &(secondary->cache_bitmap_v2_order), false, extraFlags);
+                        IFCALL(secondary->CacheBitmapV2, context, &(secondary->cache_bitmap_v2_order));
+                        break;
+
+                case ORDER_TYPE_BITMAP_COMPRESSED_V2:
+                        update_read_cache_bitmap_v2_order(s, &(secondary->cache_bitmap_v2_order), true, extraFlags);
+                        IFCALL(secondary->CacheBitmapV2, context, &(secondary->cache_bitmap_v2_order));
+                        break;
+
+                case ORDER_TYPE_BITMAP_COMPRESSED_V3:
+                        update_read_cache_bitmap_v3_order(s, &(secondary->cache_bitmap_v3_order), true, extraFlags);
+                        IFCALL(secondary->CacheBitmapV3, context, &(secondary->cache_bitmap_v3_order));
+                        break;
+
+                case ORDER_TYPE_CACHE_COLOR_TABLE:
+                        update_read_cache_color_table_order(s, &(secondary->cache_color_table_order), extraFlags);
+                        IFCALL(secondary->CacheColorTable, context, &(secondary->cache_color_table_order));
+                        break;
+
+                case ORDER_TYPE_CACHE_GLYPH:
+                        if (secondary->glyph_v2)
+                        {
+                                update_read_cache_glyph_v2_order(s, &(secondary->cache_glyph_v2_order), extraFlags);
+                                IFCALL(secondary->CacheGlyphV2, context, &(secondary->cache_glyph_v2_order));
+                        }
+                        else
+                        {
+                                update_read_cache_glyph_order(s, &(secondary->cache_glyph_order), extraFlags);
+                                IFCALL(secondary->CacheGlyph, context, &(secondary->cache_glyph_order));
+                        }
+                        break;
+
+                case ORDER_TYPE_CACHE_BRUSH:
+                        update_read_cache_brush_order(s, &(secondary->cache_brush_order), extraFlags);
+                        IFCALL(secondary->CacheBrush, context, &(secondary->cache_brush_order));
+                        break;
+
+                default:
+                        break;
+        }
+
+        s->p = next;
+}
+***********Response (CompletionUsage(completion_tokens=993, prompt_tokens=898, total_tokens=1891))***********
+{'lines': ["20: The calculation of 'next' uses '(sint16) orderLength' which can overflow if orderLength is read improperly from the stream or if it is large, leading to incorrect pointer accesses."], 'repair': ["20: Cast 'orderLength' to 'size_t' before addition to ensure it handles larger values safely."]}
+void update_recv_secondary_order(rdpUpdate* update, STREAM* s, uint8 flags)
+{
+        uint8* next;
+        uint8 orderType;
+        uint16 extraFlags;
+        uint16 orderLength;
+        rdpContext* context = update->context;
+        rdpSecondaryUpdate* secondary = update->secondary;
+
+        stream_read_uint16(s, orderLength); /* orderLength (2 bytes) */
+        stream_read_uint16(s, extraFlags); /* extraFlags (2 bytes) */
+        stream_read_uint8(s, orderType); /* orderType (1 byte) */
+
+        next = s->p + ((size_t) orderLength) + 7;
+
+#ifdef WITH_DEBUG_ORDERS
+        if (orderType < SECONDARY_DRAWING_ORDER_COUNT)
+                printf("%s Secondary Drawing Order (0x%02X)\n", SECONDARY_DRAWING_ORDER_STRINGS[orderType], orderType);
+        else
+                printf("Unknown Secondary Drawing Order (0x%02X)\n", orderType);
+#endif
+
+        switch (orderType)
+        {
+                case ORDER_TYPE_BITMAP_UNCOMPRESSED:
+                        update_read_cache_bitmap_order(s, &(secondary->cache_bitmap_order), false, extraFlags);
+                        IFCALL(secondary->CacheBitmap, context, &(secondary->cache_bitmap_order));
+                        break;
+
+                case ORDER_TYPE_CACHE_BITMAP_COMPRESSED:
+                        update_read_cache_bitmap_order(s, &(secondary->cache_bitmap_order), true, extraFlags);
+                        IFCALL(secondary->CacheBitmap, context, &(secondary->cache_bitmap_order));
+                        break;
+
+                case ORDER_TYPE_BITMAP_UNCOMPRESSED_V2:
+                        update_read_cache_bitmap_v2_order(s, &(secondary->cache_bitmap_v2_order), false, extraFlags);
+                        IFCALL(secondary->CacheBitmapV2, context, &(secondary->cache_bitmap_v2_order));
+                        break;
+
+                case ORDER_TYPE_BITMAP_COMPRESSED_V2:
+                        update_read_cache_bitmap_v2_order(s, &(secondary->cache_bitmap_v2_order), true, extraFlags);
+                        IFCALL(secondary->CacheBitmapV2, context, &(secondary->cache_bitmap_v2_order));
+                        break;
+
+                case ORDER_TYPE_BITMAP_COMPRESSED_V3:
+                        update_read_cache_bitmap_v3_order(s, &(secondary->cache_bitmap_v3_order), true, extraFlags);
+                        IFCALL(secondary->CacheBitmapV3, context, &(secondary->cache_bitmap_v3_order));
+                        break;
+
+                case ORDER_TYPE_CACHE_COLOR_TABLE:
+                        update_read_cache_color_table_order(s, &(secondary->cache_color_table_order), extraFlags);
+                        IFCALL(secondary->CacheColorTable, context, &(secondary->cache_color_table_order));
+                        break;
+
+                case ORDER_TYPE_CACHE_GLYPH:
+                        if (secondary->glyph_v2)
+                        {
+                                update_read_cache_glyph_v2_order(s, &(secondary->cache_glyph_v2_order), extraFlags);
+                                IFCALL(secondary->CacheGlyphV2, context, &(secondary->cache_glyph_v2_order));
+                        }
+                        else
+                        {
+                                update_read_cache_glyph_order(s, &(secondary->cache_glyph_order), extraFlags);
+                                IFCALL(secondary->CacheGlyph, context, &(secondary's-cache_glyph_order));
+                        }
+                        break;
+
+                case ORDER_TYPE_CACHE_BRUSH:
+                        update_read_cache_brush_order(s, &(secondary->cache_brush_order), extraFlags);
+                        IFCALL(secondary's-CacheBrush, context, &(secondary->cache_brush_order));
+                        break;
+
+                default:
+                        break;
+        }
+
+        s->p = next;
+}
+Vulnerability types: ['overflowed_call']
+
+void gdi_Bitmap_Decompress(rdpContext* context, rdpBitmap* bitmap,
+                uint8* data, int width, int height, int bpp, int length, boolean compressed)
+{
+        uint16 size;
+
+        size = width * height * (bpp + 7) / 8;
+
+        if (bitmap->data == NULL)
+                bitmap->data = (uint8*) xmalloc(size);
+        else
+                bitmap->data = (uint8*) xrealloc(bitmap->data, size);
+
+        if (compressed)
+        {
+                boolean status;
+
+                status = bitmap_decompress(data, bitmap->data, width, height, length, bpp, bpp);
+
+                if (status != true)
+                {
+                        printf("Bitmap Decompression Failed\n");
+                }
+        }
+        else
+        {
+                freerdp_image_flip(data, bitmap->data, width, height, bpp);
+
+        }
+
+        bitmap->width = width;
+        bitmap->height = height;
+        bitmap->compressed = false;
+        bitmap->length = size;
+        bitmap->bpp = bpp;
+}
+***********Response (CompletionUsage(completion_tokens=434, prompt_tokens=392, total_tokens=826))***********
+The potential overflow occurs in the calculation of 'size' (line 7) due to integer multiplication that can result in an integer overflow when 'width', 'height', and 'bpp' are large, leading to an incorrect memory allocation size. To address this, it's important to ensure that the multiplication does not exceed the maximum representable size. The fix includes checking for overflow condition before performing the multiplication.
+void gdi_Bitmap_Decompress(rdpContext* context, rdpBitmap* bitmap,
+                uint8* data, int width, int height, int bpp, int length, boolean compressed)
+{
+        uint64 calculated_size;
+        uint16 size;
+
+        calculated_size = (uint64)width * (uint64)height * ((uint64)bpp + 7) / 8;
+
+        if (calculated_size > UINT16_MAX)
+        {
+                printf("Bitmap size calculation overflow occurred\n");
+                return;
+        }
+
+        size = (uint16)calculated_size;
+
+        if (bitmap->data == NULL)
+                bitmap->data = (uint8*) xmalloc(size);
+        else
+                bitmap->data = (uint8*) xrealloc(bitmap->data, size);
+
+        if (compressed)
+        {
+                boolean status;
+
+                status = bitmap_decompress(data, bitmap->data, width, height, length, bpp, bpp);
+
+                if (status != true)
+                {
+                        printf("Bitmap Decompression Failed\n");
+                }
+        }
+        else
+        {
+                freerdp_image_flip(data, bitmap->data, width, height, bpp);
+
+        }
+
+        bitmap->width = width;
+        bitmap->height = height;
+        bitmap->compressed = false;
+        bitmap->length = size;
+        bitmap->bpp = bpp;
+}
+Vulnerability types: ['overflowed_call']
+
+static int BitBlt_SRCCOPY_8bpp(HGDI_DC hdcDest, int nXDest, int nYDest, int nWidth, int nHeight, HGDI_DC hdcSrc, int nXSrc, int nYSrc)
+{
+        int y;
+        uint8* srcp;
+        uint8* dstp;
+
+        if ((hdcDest->selectedObject != hdcSrc->selectedObject) ||
+            gdi_CopyOverlap(nXDest, nYDest, nWidth, nHeight, nXSrc, nYSrc) == 0)
+        {
+                for (y = 0; y < nHeight; y++)
+                {
+                        srcp = gdi_get_bitmap_pointer(hdcSrc, nXSrc, nYSrc + y);
+                        dstp = gdi_get_bitmap_pointer(hdcDest, nXDest, nYDest + y);
+
+                        if (srcp != 0 && dstp != 0)
+                                memcpy(dstp, srcp, nWidth * hdcDest->bytesPerPixel);
+                }
+
+                return 0;
+        }
+
+        if (nYSrc < nYDest)
+        {
+                /* copy down (bottom to top) */
+                for (y = nHeight - 1; y >= 0; y--)
+                {
+                        srcp = gdi_get_bitmap_pointer(hdcSrc, nXSrc, nYSrc + y);
+                        dstp = gdi_get_bitmap_pointer(hdcDest, nXDest, nYDest + y);
+
+                        if (srcp != 0 && dstp != 0)
+                                memmove(dstp, srcp, nWidth * hdcDest->bytesPerPixel);
+                }
+        }
+        else if (nYSrc > nYDest || nXSrc > nXDest)
+        {
+                /* copy up or left (top top bottom) */
+                for (y = 0; y < nHeight; y++)
+                {
+                        srcp = gdi_get_bitmap_pointer(hdcSrc, nXSrc, nYSrc + y);
+                        dstp = gdi_get_bitmap_pointer(hdcDest, nXDest, nYDest + y);
+
+                        if (srcp != 0 && dstp != 0)
+                                memmove(dstp, srcp, nWidth * hdcDest->bytesPerPixel);
+                }
+        }
+        else
+        {
+                /* copy straight right */
+                for (y = 0; y < nHeight; y++)
+                {
+                        srcp = gdi_get_bitmap_pointer(hdcSrc, nXSrc, nYSrc + y);
+                        dstp = gdi_get_bitmap_pointer(hdcDest, nXDest, nYDest + y);
+
+                        if (srcp != 0 && dstp != 0)
+                                memmove(dstp, srcp, nWidth * hdcDest->bytesPerPixel);
+                }
+        }
+
+        return 0;
+}
+***********Response (CompletionUsage(completion_tokens=973, prompt_tokens=770, total_tokens=1743))***********
+There is a vulnerability known as overflowed_call where the parameter 'nWidth * hdcDest->bytesPerPixel' passed to memcpy or memmove may overflow if the calculation results in a value greater than what can be stored in an integer. This can lead to memory corruption. Lines 17 and 28 have this issue as they use memcpy and memmove without adequately checking for overflows. Similarly, lines 39, 52, and 65 also suffer from potential integer overflows and utilize memmove. The solution will be to introduce a sanity check using either typecasting to size_t or a multiplication that guards against overflow.
+
+static int BitBlt_SRCCOPY_8bpp(HGDI_DC hdcDest, int nXDest, int nYDest, int nWidth, int nHeight, HGDI_DC hdcSrc, int nXSrc, int nYSrc)
+{
+        int y;
+        size_t bytesToCopy;
+        uint8* srcp;
+        uint8* dstp;
+
+        if ((hdcDest->selectedObject != hdcSrc->selectedObject) ||
+            gdi_CopyOverlap(nXDest, nYDest, nWidth, nHeight, nXSrc, nYSrc) == 0)
+        {
+                for (y = 0; y < nHeight; y++)
+                {
+                        srcp = gdi_get_bitmap_pointer(hdcSrc, nXSrc, nYSrc + y);
+                        dstp = gdi_get_bitmap_pointer(hdcDest, nXDest, nYDest + y);
+
+                        if (srcp != 0 && dstp != 0){
+                                bytesToCopy = (size_t)nWidth * (size_t)hdcDest->bytesPerPixel;
+                                memcpy(dstp, srcp, bytesToCopy);
+                        }
+                }
+
+                return 0;
+        }
+
+        if (nYSrc < nYDest)
+        {
+                /* copy down (bottom to top) */
+                for (y = nHeight - 1; y >= 0; y--)
+                {
+                        srcp = gdi_get_bitmap_pointer(hdcSrc, nXSrc, nYSrc + y);
+                        dstp = gdi_get_bitmap_pointer(hdcDest, nXDest, nYDest + y);
+
+                        if (srcp != 0 && dstp != 0){
+                                bytesToCopy = (size_t)nWidth * (size_t)hdcDest->bytesPerPixel;
+                                memmove(dstp, srcp, bytesToCopy);
+                        }
+                }
+        }
+        else if (nYSrc > nYDest || nXSrc > nXDest)
+        {
+                /* copy up or left (top top bottom) */
+                for (y = 0; y < nHeight; y++)
+                {
+                        srcp = gdi_get_bitmap_pointer(hdcSrc, nXSrc, nYSrc + y);
+                        dstp = gdi_get_bitmap_pointer(hdcDest, nXDest, nYDest + y);
+
+                        if (srcp != 0 && dstp != 0){
+                                bytesToCopy = (size_t)nWidth * (size_t)hdcDest->bytesPerPixel;
+                                memmove(dstp, srcp, bytesToCopy);
+                        }
+                }
+        }
+        else
+        {
+                /* copy straight right */
+                for (y = 0; y < nHeight; y++)
+                {
+                        srcp = gdi_get_bitmap_pointer(hdcSrc, nXSrc, nYSrc + y);
+                        dstp = gdi_get_bitmap_pointer(hdcDest, nXDest, nYDest + y);
+
+                        if (srcp != 0 && dstp != 0){
+                                bytesToCopy = (size_t)nWidth * (size_t)hdcDest->bytesPerPixel;
+                                memmove(dstp, srcp, bytesToCopy);
+                        }
+                }
+        }
+
+        return 0;
+}
+Vulnerability types: ['overflowed_variable']
+
+INLINE void gdi_RectToCRgn(HGDI_RECT rect, int *x, int *y, int *w, int *h)
+{
+        *x = rect->left;
+        *y = rect->top;
+        *w = rect->right - rect->left + 1;
+        *h = rect->bottom - rect->top + 1;
+}
+***********Response (CompletionUsage(completion_tokens=198, prompt_tokens=245, total_tokens=443))***********
+The vulnerability occurs in the lines where the width (*w) and height (*h) are calculated. If the 'right' value is less than 'left' or if 'bottom' is less than 'top', this will lead to a potential integer overflow or underflow, as the subtraction results in a negative value. Additionally, adding 1 to this result can further exacerbate the issue. To prevent this overflow or underflow, the function should calculate the absolute difference between these values.
+
+INLINE void gdi_RectToCRgn(HGDI_RECT rect, int *x, int *y, int *w, int *h)
+{
+        *x = rect->left;
+        *y = rect->top;
+        *w = abs(rect->right - rect->left) + 1;
+        *h = abs(rect->bottom - rect->top) + 1;
+}
+
+Vulnerability types: ['overflowed_call','overflowed_variable]
+
+CURLUcode curl_url_set(CURLU *u, CURLUPart what,
+                       const char *part, unsigned int flags)
+{
+  char **storep = NULL;
+  long port = 0;
+  bool urlencode = (flags & CURLU_URLENCODE)? 1 : 0;
+  bool plusencode = FALSE;
+  bool urlskipslash = FALSE;
+  bool appendquery = FALSE;
+  bool equalsencode = FALSE;
+
+  if(!u)
+    return CURLUE_BAD_HANDLE;
+  if(!part) {
+    /* setting a part to NULL clears it */
+    switch(what) {
+    case CURLUPART_URL:
+      break;
+    case CURLUPART_SCHEME:
+      storep = &u->scheme;
+      break;
+    case CURLUPART_USER:
+      storep = &u->user;
+      break;
+    case CURLUPART_PASSWORD:
+      storep = &u->password;
+      break;
+    case CURLUPART_OPTIONS:
+      storep = &u->options;
+      break;
+    case CURLUPART_HOST:
+      storep = &u->host;
+      break;
+    case CURLUPART_PORT:
+      storep = &u->port;
+      break;
+    case CURLUPART_PATH:
+      storep = &u->path;
+      break;
+    case CURLUPART_QUERY:
+      storep = &u->query;
+      break;
+    case CURLUPART_FRAGMENT:
+      storep = &u->fragment;
+      break;
+    default:
+      return CURLUE_UNKNOWN_PART;
+    }
+    if(storep && *storep) {
+      free(*storep);
+      *storep = NULL;
+    }
+    return CURLUE_OK;
+  }
+
+  switch(what) {
+  case CURLUPART_SCHEME:
+    if(!(flags & CURLU_NON_SUPPORT_SCHEME) &&
+       /* verify that it is a fine scheme */
+       !Curl_builtin_scheme(part))
+      return CURLUE_UNSUPPORTED_SCHEME;
+    storep = &u->scheme;
+    urlencode = FALSE; /* never */
+    break;
+  case CURLUPART_USER:
+    storep = &u->user;
+    break;
+  case CURLUPART_PASSWORD:
+    storep = &u->password;
+    break;
+  case CURLUPART_OPTIONS:
+    storep = &u->options;
+    break;
+  case CURLUPART_HOST:
+    storep = &u->host;
+    break;
+  case CURLUPART_PORT:
+    urlencode = FALSE; /* never */
+    port = strtol(part, NULL, 10);  /* Port number must be decimal */
+    if((port <= 0) || (port > 0xffff))
+      return CURLUE_BAD_PORT_NUMBER;
+    storep = &u->port;
+    break;
+  case CURLUPART_PATH:
+    urlskipslash = TRUE;
+    storep = &u->path;
+    break;
+  case CURLUPART_QUERY:
+    plusencode = urlencode;
+    appendquery = (flags & CURLU_APPENDQUERY)?1:0;
+    equalsencode = appendquery;
+    storep = &u->query;
+    break;
+  case CURLUPART_FRAGMENT:
+    storep = &u->fragment;
+    break;
+  case CURLUPART_URL: {
+    /*
+     * Allow a new URL to replace the existing (if any) contents.
+     *
+     * If the existing contents is enough for a URL, allow a relative URL to
+     * replace it.
+     */
+    CURLUcode result;
+    char *oldurl;
+    char *redired_url;
+    CURLU *handle2;
+
+    if(Curl_is_absolute_url(part, NULL, MAX_SCHEME_LEN)) {
+      handle2 = curl_url();
+      if(!handle2)
+        return CURLUE_OUT_OF_MEMORY;
+      result = parseurl(part, handle2, flags);
+      if(!result)
+        mv_urlhandle(handle2, u);
+      else
+        curl_url_cleanup(handle2);
+      return result;
+    }
+    /* extract the full "old" URL to do the redirect on */
+    result = curl_url_get(u, CURLUPART_URL, &oldurl, flags);
+    if(result) {
+      /* couldn't get the old URL, just use the new! */
+      handle2 = curl_url();
+      if(!handle2)
+        return CURLUE_OUT_OF_MEMORY;
+      result = parseurl(part, handle2, flags);
+      if(!result)
+        mv_urlhandle(handle2, u);
+      else
+        curl_url_cleanup(handle2);
+      return result;
+    }
+
+    /* apply the relative part to create a new URL */
+    redired_url = concat_url(oldurl, part);
+    free(oldurl);
+    if(!redired_url)
+      return CURLUE_OUT_OF_MEMORY;
+
+    /* now parse the new URL */
+    handle2 = curl_url();
+    if(!handle2) {
+      free(redired_url);
+      return CURLUE_OUT_OF_MEMORY;
+    }
+    result = parseurl(redired_url, handle2, flags);
+    free(redired_url);
+    if(!result)
+      mv_urlhandle(handle2, u);
+    else
+      curl_url_cleanup(handle2);
+    return result;
+  }
+  default:
+    return CURLUE_UNKNOWN_PART;
+  }
+  if(storep) {
+    const char *newp = part;
+    size_t nalloc = strlen(part);
+
+    if(urlencode) {
+      const char *i;
+      char *o;
+      bool free_part = FALSE;
+      char *enc = malloc(nalloc * 3 + 1); /* for worst case! */
+      if(!enc)
+        return CURLUE_OUT_OF_MEMORY;
+      if(plusencode) {
+        /* space to plus */
+        i = part;
+        for(o = enc; *i; ++o, ++i)
+          *o = (*i == ' ') ? '+' : *i;
+        *o = 0; /* zero terminate */
+        part = strdup(enc);
+        if(!part) {
+          free(enc);
+          return CURLUE_OUT_OF_MEMORY;
+        }
+        free_part = TRUE;
+      }
+      for(i = part, o = enc; *i; i++) {
+        if(Curl_isunreserved(*i) ||
+           ((*i == '/') && urlskipslash) ||
+           ((*i == '=') && equalsencode) ||
+           ((*i == '+') && plusencode)) {
+          if((*i == '=') && equalsencode)
+            /* only skip the first equals sign */
+            equalsencode = FALSE;
+          *o = *i;
+          o++;
+        }
+        else {
+          msnprintf(o, 4, "%%%02x", *i);
+          o += 3;
+        }
+      }
+      *o = 0; /* zero terminate */
+      newp = enc;
+      if(free_part)
+        free((char *)part);
+    }
+    else {
+      char *p;
+      newp = strdup(part);
+      if(!newp)
+        return CURLUE_OUT_OF_MEMORY;
+      p = (char *)newp;
+      while(*p) {
+        /* make sure percent encoded are lower case */
+        if((*p == '%') && ISXDIGIT(p[1]) && ISXDIGIT(p[2]) &&
+           (ISUPPER(p[1]) || ISUPPER(p[2]))) {
+          p[1] = (char)TOLOWER(p[1]);
+          p[2] = (char)TOLOWER(p[2]);
+          p += 3;
+        }
+        else
+          p++;
+      }
+    }
+
+    if(appendquery) {
+      /* Append the string onto the old query. Add a '&' separator if none is
+         present at the end of the exsting query already */
+      size_t querylen = u->query ? strlen(u->query) : 0;
+      bool addamperand = querylen && (u->query[querylen -1] != '&');
+      if(querylen) {
+        size_t newplen = strlen(newp);
+        char *p = malloc(querylen + addamperand + newplen + 1);
+        if(!p) {
+          free((char *)newp);
+          return CURLUE_OUT_OF_MEMORY;
+        }
+        strcpy(p, u->query); /* original query */
+        if(addamperand)
+          p[querylen] = '&'; /* ampersand */
+        strcpy(&p[querylen + addamperand], newp); /* new suffix */
+        free((char *)newp);
+        free(*storep);
+        *storep = p;
+        return CURLUE_OK;
+      }
+    }
+
+    free(*storep);
+    *storep = (char *)newp;
+  }
+  /* set after the string, to make it not assigned if the allocation above
+     fails */
+  if(port)
+    u->portnum = port;
+  return CURLUE_OK;
+}
+***********Response (CompletionUsage(completion_tokens=1992, prompt_tokens=2028, total_tokens=4020))***********
+{'line_60': "Potential overflow when converting 'part' to a long integer for the port number using strtol without validating the input length or contents. Fix: Validate the length of 'part' to ensure it's within expected bounds for port numbers and does not contain invalid characters before converting.", 'line_114': "Memory allocation (malloc) where the size isn't checked to prevent integer overflow from uncontrolled string lengths in URLs being encoded. Fix: Validate 'part' length to ensure it's reasonable before attempting to allocate memory based on this length."}
+CURLUcode curl_url_set(CURLU *u, CURLUPart what,
+                       const char *part, unsigned int flags)
+{
+  char **storep = NULL;
+  long port = 0;
+  bool urlencode = (flags & CURLU_URLENCODE)? 1 : 0;
+  bool plusencode = FALSE;
+  bool urlskipslash = FALSE;
+  bool appendquery = FALSE;
+  bool equalsencode = FALSE;
+
+  if(!u)
+    return CURLUE_BAD_HANDLE;
+  if(!part) {
+    /* setting a part to NULL clears it */
+    switch(what) {
+    case CURLUPART_URL:
+      break;
+    case CURLUPART_SCHEME:
+      storep = &u->scheme;
+      break;
+    case CURLUPART_USER:
+      storep = &u->user;
+      break;
+    case CURLUPART_PASSWORD:
+      storep = &u->password;
+      break;
+    case CURLUPART_OPTIONS:
+      storep = &u->options;
+      break;
+    case CURLUPART_HOST:
+      storep = &u->host;
+      break;
+    case CURLUPART_PORT:
+      storep = &u->port;
+      break;
+    case CURLUPART_PATH:
+      storep = &u->path;
+      break;
+    case CURLUPART_QUERY:
+      storep = &u->query;
+      break;
+    case CURLUPART_FRAGMENT:
+      storep = &u->fragment;
+      break;
+    default:
+      return CURLUE_UNKNOWN_PART;
+    }
+    if(storep && *storep) {
+      free(*storep);
+      *storep = NULL;
+    }
+    return CURLUE_OK;
+  }
+
+  switch(what) {
+  case CURLUPART_SCHEME:
+    if(!(flags & CURLU_NON_SUPPORT_SCHEME) &&
+       /* verify that it is a fine scheme */
+       !Curl_builtin_scheme(part))
+      return CURLUE_UNSUPPORTED_SCHEME;
+    storep = &u->scheme;
+    urlencode = FALSE; /* never */
+    break;
+  case CURLUPART_USER:
+    storep = &u->user;
+    break;
+  case CURLUPART_PASSWORD:
+    storep = &u->password;
+    break;
+  case CURLUPART_OPTIONS:
+    storep = &u->options;
+    break;
+  case CURLUPART_HOST:
+    storep = &u->host;
+    break;
+  case CURLUPART_PORT:
+    urlencode = FALSE; /* never */
+    if(strlen(part) < 6) {
+      port = strtol(part, NULL, 10);  /* Port number must be decimal */
+      if((port <= 0) || (port > 0xffff))
+        return CURLUE_BAD_PORT_NUMBER;
+    } else {
+      return CURLUE_BAD_PORT_NUMBER;
+    }
+    storep = &u->port;
+    break;
+  case CURLUPART_PATH:
+    urlskipslash = TRUE;
+    storep = &u->path;
+    break;
+  case CURLUPART_QUERY:
+    plusencode = urlencode;
+    appendquery = (flags & CURLU_APPENDQUERY)?1:0;
+    equalsencode = appendquery;
+    storep = &u->query;
+    break;
+  case CURLUPART_FRAGMENT:
+    storep = &u->fragment;
+    break;
+  case CURLUPART_URL: {
+    /*
+     * Allow a new URL to replace the existing (if any) contents.
+     *
+     * If the existing contents is enough for a URL, allow a relative URL to
+     * replace it.
+     */
+    CURLUcode result;
+    char *oldurl;
+    char *redired_url;
+    CURLU *handle2;
+
+    if(Curl_is_absolute_url(part, NULL, MAX_SCHEME_LEN)) {
+      handle2 = curl_url();
+      if(!handle2)
+        return CURLUE_OUT_OF_MEMORY;
+      result = parseurl(part, handle2, flags);
+      if(!result)
+        mv_urlhandle(handle2, u);
+      else
+        curl_url_cleanup(handle2);
+      return result;
+    }
+    /* extract the full "old" URL to do the redirect on */
+    result = curl_url_get(u, CURLUPART_URL, &oldurl, flags);
+    if(result) {
+      /* couldn't get the old URL, just use the new! */
+      handle2 = curl_url();
+      if(!handle2)
+        return CURLUE_OUT_OF_MEMORY;
+      result = parseurl(part, handle2, flags);
+      if(!result)
+        mv_urlhandle(handle2, u);
+      else
+        curl_url_cleanup(handle2);
+      return result;
+    }
+
+    /* apply the relative part to create a new URL */
+    redired_url = concat_url(oldurl, part);
+    free(oldurl);
+    if(!redired_url)
+      return CURLUE_OUT_OF_MEMORY;
+
+    /* now parse the new URL */
+    handle2 = curl_url();
+    if(!handle2) {
+      free(redired_url);
+      return CURLUE_OUT_OF_MEMORY;
+    }
+    result = parseurl(redired_url, handle2, flags);
+    free(redired_url);
+    if(!result)
+      mv_urlhandle(handle2, u);
+    else
+      curl_url_cleanup(handle2);
+    return result;
+  }
+  default:
+    return CURLUE_UNKNOWN_PART;
+  }
+  if(storep) {
+    const char *newp = part;
+    if(strlen(part) < 1024) {
+      size_t nalloc = strlen(part);
+
+      if(urlencode) {
+        const char *i;
+        char *o;
+        bool free_part = FALSE;
+        char *enc = malloc(nalloc * 3 + 1); /* for worst case! */
+        if(!enc)
+          return CURLUE_OUT_OF_MEMORY;
+        if(plusencode) {
+          /* space to plus */
+          i = part;
+          for(o = enc; *i; ++o, ++i)
+            *o = (*i == ' ') ? '+' : *i;
+          *o = 0; /* zero terminate */
+          part = strdup(enc);
+          if(!part) {
+            free(enc);
+            return CURLUE_OUT_OF_MEMORY;
+          }
+          free_part = TRUE;
+        }
+        for(i = part, o = enc; *i; i++) {
+          if(Curl_isunreserved(*i) ||
+             ((*i == '/') && urlskipslash) ||
+             ((*i == '=') && equalsencode) ||
+             ((*i == '+') && plusencode)) {
+            if((*i == '=') && equalsencode)
+              /* only skip the first equals sign */
+              equalsencode = FALSE;
+            *o = *i;
+            o++;
+          }
+          else {
+            msnprintf(o, 4, "%02x", *i);
+            o += 3;
+          }
+        }
+        *o = 0; /* zero terminate */
+        newp = enc;
+        if(free_part)
+          free((char *)part);
+      }
+      else {
+        char *p;
+        newp = strdup(part);
+        if(!newp)
+          return CURLUE_OUT_OF_MEMORY;
+        p = (char *)newp;
+        while(*p) {
+          /* make sure percent encoded are lower case */
+          if((*p == '%') && ISXDIGIT(p[1]) && ISXDIGIT(p[2]) &&
+             (ISUPPER(p[1]) || ISUPPER(p[2]))) {
+            p[1] = (char)TOLOWER(p[1]);
+            p[2] = (char)TOLOWER(p[2]);
+            p += 3;
+          }
+          else
+            p++;
+        }
+      }
+
+      if(appendque...)}
+Vulnerability types: ['overflowed_call', 'overflowed_variable]
+
+static CURLUcode seturl(const char *url, CURLU *u, unsigned int flags)
+{
+  char *path;
+  bool path_alloced = FALSE;
+  char *hostname;
+  char *query = NULL;
+  char *fragment = NULL;
+  CURLUcode result;
+  bool url_has_scheme = FALSE;
+  char schemebuf[MAX_SCHEME_LEN];
+  char *schemep = NULL;
+  size_t schemelen = 0;
+  size_t urllen;
+  const struct Curl_handler *h = NULL;
+
+  if(!url)
+    return CURLUE_MALFORMED_INPUT;
+
+  /*************************************************************
+   * Parse the URL.
+   ************************************************************/
+  /* allocate scratch area */
+  urllen = strlen(url);
+  path = u->scratch = malloc(urllen * 2 + 2);
+  if(!path)
+    return CURLUE_OUT_OF_MEMORY;
+
+  hostname = &path[urllen + 1];
+  hostname[0] = 0;
+
+  if(Curl_is_absolute_url(url, schemebuf, sizeof(schemebuf))) {
+    url_has_scheme = TRUE;
+    schemelen = strlen(schemebuf);
+  }
+
+  /* handle the file: scheme */
+  if(url_has_scheme && strcasecompare(schemebuf, "file")) {
+    /* path has been allocated large enough to hold this */
+    strcpy(path, &url[5]);
+
+    hostname = NULL; /* no host for file: URLs */
+    u->scheme = strdup("file");
+    if(!u->scheme)
+      return CURLUE_OUT_OF_MEMORY;
+
+    /* Extra handling URLs with an authority component (i.e. that start with
+     * "file://")
+     *
+     * We allow omitted hostname (e.g. file:/<path>) -- valid according to
+     * RFC 8089, but not the (current) WHAT-WG URL spec.
+     */
+    if(path[0] == '/' && path[1] == '/') {
+      /* swallow the two slashes */
+      char *ptr = &path[2];
+
+      /*
+       * According to RFC 8089, a file: URL can be reliably dereferenced if:
+       *
+       *  o it has no/blank hostname, or
+       *
+       *  o the hostname matches "localhost" (case-insensitively), or
+       *
+       *  o the hostname is a FQDN that resolves to this machine.
+       *
+       * For brevity, we only consider URLs with empty, "localhost", or
+       * "127.0.0.1" hostnames as local.
+       *
+       * Additionally, there is an exception for URLs with a Windows drive
+       * letter in the authority (which was accidentally omitted from RFC 8089
+       * Appendix E, but believe me, it was meant to be there. --MK)
+       */
+      if(ptr[0] != '/' && !STARTS_WITH_URL_DRIVE_PREFIX(ptr)) {
+        /* the URL includes a host name, it must match "localhost" or
+           "127.0.0.1" to be valid */
+        if(!checkprefix("localhost/", ptr) &&
+           !checkprefix("127.0.0.1/", ptr)) {
+          /* Invalid file://hostname/, expected localhost or 127.0.0.1 or
+             none */
+          return CURLUE_MALFORMED_INPUT;
+        }
+        ptr += 9; /* now points to the slash after the host */
+      }
+
+      path = ptr;
+    }
+
+#if !defined(MSDOS) && !defined(WIN32) && !defined(__CYGWIN__)
+    /* Don't allow Windows drive letters when not in Windows.
+     * This catches both "file:/c:" and "file:c:" */
+    if(('/' == path[0] && STARTS_WITH_URL_DRIVE_PREFIX(&path[1])) ||
+       STARTS_WITH_URL_DRIVE_PREFIX(path)) {
+      /* File drive letters are only accepted in MSDOS/Windows */
+      return CURLUE_MALFORMED_INPUT;
+    }
+#else
+    /* If the path starts with a slash and a drive letter, ditch the slash */
+    if('/' == path[0] && STARTS_WITH_URL_DRIVE_PREFIX(&path[1])) {
+      /* This cannot be done with strcpy, as the memory chunks overlap! */
+      memmove(path, &path[1], strlen(&path[1]) + 1);
+    }
+#endif
+
+  }
+  else {
+    /* clear path */
+    const char *p;
+    const char *hostp;
+    size_t len;
+    path[0] = 0;
+
+    if(url_has_scheme) {
+      int i = 0;
+      p = &url[schemelen + 1];
+      while(p && (*p == '/') && (i < 4)) {
+        p++;
+        i++;
+      }
+      if((i < 1) || (i>3))
+        /* less than one or more than three slashes */
+        return CURLUE_MALFORMED_INPUT;
+
+      schemep = schemebuf;
+      if(!Curl_builtin_scheme(schemep) &&
+         !(flags & CURLU_NON_SUPPORT_SCHEME))
+        return CURLUE_UNSUPPORTED_SCHEME;
+
+      if(junkscan(schemep))
+        return CURLUE_MALFORMED_INPUT;
+    }
+    else {
+      /* no scheme! */
+
+      if(!(flags & (CURLU_DEFAULT_SCHEME|CURLU_GUESS_SCHEME)))
+        return CURLUE_MALFORMED_INPUT;
+      if(flags & CURLU_DEFAULT_SCHEME)
+        schemep = (char *) DEFAULT_SCHEME;
+
+      /*
+       * The URL was badly formatted, let's try without scheme specified.
+       */
+      p = url;
+    }
+    hostp = p; /* host name starts here */
+
+    while(*p && !HOSTNAME_END(*p)) /* find end of host name */
+      p++;
+
+    len = p - hostp;
+    if(!len)
+      return CURLUE_MALFORMED_INPUT;
+
+    memcpy(hostname, hostp, len);
+    hostname[len] = 0;
+
+    if((flags & CURLU_GUESS_SCHEME) && !schemep) {
+      /* legacy curl-style guess based on host name */
+      if(checkprefix("ftp.", hostname))
+        schemep = (char *)"ftp";
+      else if(checkprefix("dict.", hostname))
+        schemep = (char *)"dict";
+      else if(checkprefix("ldap.", hostname))
+        schemep = (char *)"ldap";
+      else if(checkprefix("imap.", hostname))
+        schemep = (char *)"imap";
+      else if(checkprefix("smtp.", hostname))
+        schemep = (char *)"smtp";
+      else if(checkprefix("pop3.", hostname))
+        schemep = (char *)"pop3";
+      else
+        schemep = (char *)"http";
+    }
+
+    len = strlen(p);
+    memcpy(path, p, len);
+    path[len] = 0;
+
+    u->scheme = strdup(schemep);
+    if(!u->scheme)
+      return CURLUE_OUT_OF_MEMORY;
+  }
+
+  /* if this is a known scheme, get some details */
+  h = Curl_builtin_scheme(u->scheme);
+
+  if(junkscan(path))
+    return CURLUE_MALFORMED_INPUT;
+
+  query = strchr(path, '?');
+  if(query)
+    *query++ = 0;
+
+  fragment = strchr(query?query:path, '#');
+  if(fragment)
+    *fragment++ = 0;
+
+  if(!path[0])
+    /* if there's no path set, unset */
+    path = NULL;
+  else if(!(flags & CURLU_PATH_AS_IS)) {
+    /* sanitise paths and remove ../ and ./ sequences according to RFC3986 */
+    char *newp = Curl_dedotdotify(path);
+    if(!newp)
+      return CURLUE_OUT_OF_MEMORY;
+
+    if(strcmp(newp, path)) {
+      /* if we got a new version */
+      path = newp;
+      path_alloced = TRUE;
+    }
+    else
+      free(newp);
+  }
+  if(path) {
+    u->path = path_alloced?path:strdup(path);
+    if(!u->path)
+      return CURLUE_OUT_OF_MEMORY;
+  }
+
+  if(hostname) {
+    /*
+     * Parse the login details and strip them out of the host name.
+     */
+    if(junkscan(hostname))
+      return CURLUE_MALFORMED_INPUT;
+
+    result = parse_hostname_login(u, h, &hostname, flags);
+    if(result)
+      return result;
+
+    result = Curl_parse_port(u, hostname);
+    if(result)
+      return result;
+
+    result = hostname_check(hostname, flags);
+    if(result)
+      return result;
+
+    u->host = strdup(hostname);
+    if(!u->host)
+      return CURLUE_OUT_OF_MEMORY;
+  }
+
+  if(query) {
+    u->query = strdup(query);
+    if(!u->query)
+      return CURLUE_OUT_OF_MEMORY;
+  }
+  if(fragment && fragment[0]) {
+    u->fragment = strdup(fragment);
+    if(!u->fragment)
+      return CURLUE_OUT_OF_MEMORY;
+  }
+
+  free(u->scratch);
+  u->scratch = NULL;
+
+  return CURLUE_OK;
+}
+***********Response (CompletionUsage(completion_tokens=2519, prompt_tokens=2105, total_tokens=4624))***********
+{'description': "The provided C code has two potential issues related to buffer overflows: firstly in the use of strcpy for handling paths which can lead to an overflow if the destination buffer isn't large enough, and secondly in the assumption that the hostname buffer can fit within set boundaries without checking the source length. These vulnerabilities are addressed by replacing strcpy with strncpy and by ensuring that memory copying doesn't exceed buffer sizes.", 'solutions': [{'line': 'strcpy(path, &url[5]);', 'fix': 'Use strncpy to avoid potential overflow.'}, {'line': 'memcpy(hostname, hostp, len);', 'fix': "Add checks to ensure 'len' does not exceed the allowable size for 'hostname' buffer."}]}
+static CURLUcode seturl(const char *url, CURLU *u, unsigned int flags)
+{
+  char *path;
+  bool path_alloced = FALSE;
+  char *hostname;
+  char *query = NULL;
+  char *fragment = NULL;
+  CURLUcode result;
+  bool url_has_scheme = FALSE;
+  char schemebuf[MAX_SCHEME_LEN];
+  char *schemep = NULL;
+  size_t schemelen = 0;
+  size_t urllen;
+  const struct Curl_handler *h = NULL;
+
+  if(!url)
+    return CURLUE_MALFORMED_INPUT;
+
+  /*************************************************************/
+  /* Parse the URL. */
+  /************************************************************/
+  /* allocate scratch area */
+  urllen = strlen(url);
+  path = u->scratch = malloc(urllen * 2 + 2);
+  if(!path)
+    return CURLUE_OUT_OF_MEMORY;
+
+  hostname = &path[urllen + 1];
+  hostname[0] = 0;
+
+  if(Curl_is_absolute_url(url, schemebuf, sizeof(schemebuf))) {
+    url_has_scheme = TRUE;
+    schemelen = strlen(schemebuf);
+  }
+
+  /* handle the file: scheme */
+  if(url_has_scheme && strcasecompare(schemebuf, "file")) {
+    /* path has been allocated large enough to hold this */
+    strncpy(path, &url[5], urllen * 2 + 2 - 5); /* Ensure copy does not exceed allocated space */
+
+    hostname = NULL; /* no host for file: URLs */
+    u->scheme = strdup("file");
+    if(!u->scheme)
+      return CURLUE_OUT_OF_MEMORY;
+
+    /* Extra handling URLs with an authority component (i.e. that start with
+     * "file://")
+     *
+     * We allow omitted hostname (e.g. file:/<path>) -- valid according to
+     * RFC 8089, but not the (current) WHAT-WG URL spec.
+     */
+    if(path[0] == '/' && path[1] == '/') {
+      /* swallow the two slashes */
+      char *ptr = &path[2];
+
+      /*
+       * According to RFC 8089, a file: URL can be reliably dereferenced if:
+       *
+       *  o it has no/blank hostname, or
+       *
+       *  o the hostname matches "localhost" (case-insensitively), or
+       *
+       *  o the hostname is a FQDN that resolves to this machine.
+       *
+       * For brevity, we only consider URLs with empty, "localhost", or
+       * "127.0.0.1" hostnames as local.
+       *
+       * Additionally, there is an exception for URLs with a Windows drive
+       * letter in the authority (which was accidentally omitted from RFC 8089
+       * Appendix E, but believe me, it was meant to be there. --MK)
+       */
+      if(ptr[0] != '/' && !STARTS_WITH_URL_DRIVE_PREFIX(ptr)) {
+        /* the URL includes a host name, it must match "localhost" or
+           "127.0.0.1" to be valid */
+        if(!checkprefix("localhost/", ptr) &&
+           !checkprefix("127.0.0.1/", ptr)) {
+          /* Invalid file://hostname/, expected localhost or 127.0.0.1 or
+             none */
+          return CURLUE_MALFORMED_INPUT;
+        }
+        ptr += 9; /* now points to the slash after the host */
+      }
+
+      path = ptr;
+    }
+
+#if !defined(MSDOS) && !defined(WIN32) && !defined(__CYGWIN__)
+    /* Don't allow Windows drive letters when not in Windows.
+     * This catches both "file:/c:" and "file:c:" */
+    if(('/' == path[0] && STARTS_WITH_URL_DRIVE_PREFIX(&path[1])) ||
+       STARTS_WITH_URL_DRIVE_PREFIX(path)) {
+      /* File drive letters are only accepted in MSDOS/Windows */
+      return CURLUE_MALFORMED_INPUT;
+    }
+#else
+    /* If the path starts with a slash and a drive letter, ditch the slash */
+    if('/' == path[0] && STARTS_WITH_URL_DRIVE_PREFIX(&path[1])) {
+      /* This cannot be done with strcpy, as the memory chunks overlap! */
+      memmove(path, &path[1], strlen(&path[1]) + 1);
+    }
+#endif
+
+  }
+  else {
+    /* clear path */
+    const char *p;
+    const char *hostp;
+    size_t len;
+    path[0] = 0;
+
+    if(url_has_scheme) {
+      int i = 0;
+      p = &url[schemelen + 1];
+      while(p && (*p == '/') && (i < 4)) {
+        p++;
+        i++;
+      }
+      if((i < 1) || (i>3))
+        /* less than one or more than three slashes */
+        return CURLUE_MALFORMED_INPUT;
+
+      schemep = schemebuf;
+      if(!Curl_builtin_scheme(schemep) &&
+         !(flags & CURLU_NON_SUPPORT_SCHEME))
+        return CURLUE_UNSUPPORTED_SCHEME;
+
+      if(junkscan(schemep))
+        return CURLUE_MALFORMED_INPUT;
+    }
+    else {
+      /* no scheme! */
+
+      if(!(flags & (CURLU_DEFAULT_SCHEME|CURLU_GUESS_SCHEME)))
+        return CURLUE_MALFORMED_INPUT;
+      if(flags & CURLU_DEFAULT_SCHEME)
+        schemep = (char *) DEFAULT_SCHEME;
+
+      /*
+       * The URL was badly formatted, let's try without scheme specified.
+       */
+      p = url;
+    }
+    hostp = p; /* host name starts here */
+
+    while(*p && !HOSTNAME_END(*p)) /* find end of host name */
+      p++;
+
+    len = p - hostp;
+    if(!len)
+      return CURLUE_MALFORMED_INPUT;
+
+    if (len < urllen + 1) { /* Check that the len does not exceed the buffer size */
+      memcpy(hostname, hostp, len);
+      hostname[len] = 0;
+    }
+    else {
+      return CURLUE_MALFORMED_INPUT; /* Provided hostp is too long for the allocated buffer */
+    }
+
+    if((flags & CURLU_GUESS_SCHEME) && !schemep) {
+      /* legacy curl-style guess based on host name */
+      if(checkprefix("ftp.", hostname))
+        schemep = (char *)"ftp";
+      else if(checkprefix("dict.", hostname))
+        schemep = (char *)"dict";
+      else if(checkprefix("ldap.", hostname))
+        schemep = (char *)"ldap";
+      else if(checkprefix("imap.", hostname))
+        schemep = (char *)"imap";
+      else if(checkprefix("smtp.", hostname))
+        schemep = (char *)"smtp";
+      else if(checkprefix("pop3.", hostname))
+        schemep = (char *)"pop3";
+      else
+        schemep = (char *)"http";
+    }
+
+    len = strlen(p);
+    memcpy(path, p, len);
+    path[len] = 0;
+
+    u->scheme = strdup(schemep);
+    if(!u->scheme)
+      return CURLUE_OUT_OF_MEMORY;
+  }
+
+  /* if this is a known scheme, get some details */
+  h = Curl_builtin_scheme(u->scheme);
+
+  if(junkscan(path))
+    return CURLUE_MALFORMED_INPUT;
+
+  query = strchr(path, '?');
+  if(query)
+    *query++ = 0;
+
+  fragment = strchr(query?query:path, '#');
+  if(fragment)
+    *fragment++ = 0;
+
+  if(!path[0])
+    /* if there's no path set, unset */
+    path = NULL;
+  else if(!(flags & CURLU_PATH_AS_IS)) {
+    /* sanitise paths and remove ../ and ./ sequences according to RFC3986 */
+    char *newp = Curl_dedotdotify(path);
+    if(!newp)
+      return CURLUE_OUT_OF_MEMORY;
+
+    if(strcmp(newp, path)) {
+      /* if we got a new version */
+      path = newp;
+      path_alloced = TRUE;
+    }
+    else
+      free(newp);
+  }
+  if(path) {
+    u->path = path_alloced?path:strdup(path);
+    if(!u->path)
+      return CURLUE_OUT_OF_MEMORY;
+  }
+
+  if(hostname) {
+    /*
+     * Parse the login details and strip them out of the host name.
+     */
+    if(junkscan(hostname))
+      return CURLUE_MALFORMED_INPUT;
+
+    result = parse_hostname_login(u, h, &hostname, flags);
+    if(result)
+      return result;
+
+    result = Curl_parse_port(u, hostname);
+    if(result)
+      return result;
+
+    result = hostname_check(hostname, flags);
+    if(result)
+      return result;
+
+    u->host = strdup(hostname);
+    if(!u->host)
+      return CURLUE_OUT_OF_MEMORY;
+  }
+
+  if(query) {
+    u->query = strdup(query);
+    if(!u->query)
+      return CURLUE_OUT_OF_MEMORY;
+  }
+  if(fragment && fragment[0]) {
+    u->fragment = strdup(fragment);
+    if(!u->fragment)
+      return CURLUE_OUT_OF_MEMORY;
+  }
+
+  free(u->scratch);
+  u->scratch = NULL;
+
+  return CURLUE_OK;
+}
+Vulnerability types: ['heap_overflow']
+
+static CURLcode tftp_send_first(tftp_state_data_t *state, tftp_event_t event)
+{
+  size_t sbytes;
+  ssize_t senddata;
+  const char *mode = "octet";
+  char *filename;
+  struct Curl_easy *data = state->conn->data;
+  CURLcode result = CURLE_OK;
+
+  /* Set ascii mode if -B flag was used */
+  if(data->set.prefer_ascii)
+    mode = "netascii";
+
+  switch(event) {
+
+  case TFTP_EVENT_INIT:    /* Send the first packet out */
+  case TFTP_EVENT_TIMEOUT: /* Resend the first packet out */
+    /* Increment the retry counter, quit if over the limit */
+    state->retries++;
+    if(state->retries>state->retry_max) {
+      state->error = TFTP_ERR_NORESPONSE;
+      state->state = TFTP_STATE_FIN;
+      return result;
+    }
+
+    if(data->set.upload) {
+      /* If we are uploading, send an WRQ */
+      setpacketevent(&state->spacket, TFTP_EVENT_WRQ);
+      state->conn->data->req.upload_fromhere =
+        (char *)state->spacket.data + 4;
+      if(data->state.infilesize != -1)
+        Curl_pgrsSetUploadSize(data, data->state.infilesize);
+    }
+    else {
+      /* If we are downloading, send an RRQ */
+      setpacketevent(&state->spacket, TFTP_EVENT_RRQ);
+    }
+    /* As RFC3617 describes the separator slash is not actually part of the
+       file name so we skip the always-present first letter of the path
+       string. */
+    result = Curl_urldecode(data, &state->conn->data->state.path[1], 0,
+                            &filename, NULL, FALSE);
+    if(result)
+      return result;
+
+    if(strlen(filename) > (state->blksize - strlen(mode) - 4)) {
+      failf(data, "TFTP file name too long\n");
+      free(filename);
+      return CURLE_TFTP_ILLEGAL; /* too long file name field */
+    }
+
+    snprintf((char *)state->spacket.data + 2,
+             state->blksize,
+             "%s%c%s%c", filename, '\0',  mode, '\0');
+    sbytes = 4 + strlen(filename) + strlen(mode);
+
+    /* optional addition of TFTP options */
+    if(!data->set.tftp_no_options) {
+      char buf[64];
+      /* add tsize option */
+      if(data->set.upload && (data->state.infilesize != -1))
+        snprintf(buf, sizeof(buf), "%" CURL_FORMAT_CURL_OFF_T,
+                 data->state.infilesize);
+      else
+        strcpy(buf, "0"); /* the destination is large enough */
+
+      sbytes += tftp_option_add(state, sbytes,
+                                (char *)state->spacket.data + sbytes,
+                                TFTP_OPTION_TSIZE);
+      sbytes += tftp_option_add(state, sbytes,
+                                (char *)state->spacket.data + sbytes, buf);
+      /* add blksize option */
+      snprintf(buf, sizeof(buf), "%d", state->requested_blksize);
+      sbytes += tftp_option_add(state, sbytes,
+                                (char *)state->spacket.data + sbytes,
+                                TFTP_OPTION_BLKSIZE);
+      sbytes += tftp_option_add(state, sbytes,
+                                (char *)state->spacket.data + sbytes, buf);
+
+      /* add timeout option */
+      snprintf(buf, sizeof(buf), "%d", state->retry_time);
+      sbytes += tftp_option_add(state, sbytes,
+                                (char *)state->spacket.data + sbytes,
+                                TFTP_OPTION_INTERVAL);
+      sbytes += tftp_option_add(state, sbytes,
+                                (char *)state->spacket.data + sbytes, buf);
+    }
+
+    /* the typecase for the 3rd argument is mostly for systems that do
+       not have a size_t argument, like older unixes that want an 'int' */
+    senddata = sendto(state->sockfd, (void *)state->spacket.data,
+                      (SEND_TYPE_ARG3)sbytes, 0,
+                      state->conn->ip_addr->ai_addr,
+                      state->conn->ip_addr->ai_addrlen);
+    if(senddata != (ssize_t)sbytes) {
+      failf(data, "%s", Curl_strerror(state->conn, SOCKERRNO));
+    }
+    free(filename);
+    break;
+
+  case TFTP_EVENT_OACK:
+    if(data->set.upload) {
+      result = tftp_connect_for_tx(state, event);
+    }
+    else {
+      result = tftp_connect_for_rx(state, event);
+    }
+    break;
+
+  case TFTP_EVENT_ACK: /* Connected for transmit */
+    result = tftp_connect_for_tx(state, event);
+    break;
+
+  case TFTP_EVENT_DATA: /* Connected for receive */
+    result = tftp_connect_for_rx(state, event);
+    break;
+
+  case TFTP_EVENT_ERROR:
+    state->state = TFTP_STATE_FIN;
+    break;
+
+  default:
+    failf(state->conn->data, "tftp_send_first: internal error");
+    break;
+  }
+
+  return result;
+}
+***********Response (CompletionUsage(completion_tokens=869, prompt_tokens=1276, total_tokens=2145))***********
+{'description': 'The code improperly handles the size limit of a TFTP packet, leading to a heap buffer overflow due to a lack of bounds checking before using snprintf() to write the filename and mode into state->spacket.data. Vulnerable code on line 47 could potentially allow filenames longer than the allocated buffer when combined with the fixed length string values and null characters. This vulnerability will be fixed by ensuring snprintf() respects buffer size minus accumulated sizes (subtracting strlen(filename) and strlen(mode) and fixed characters).', 'lines': ['47: snprintf((char *)state->spacket.data + 2, state->blksize, "%s%c%s%c", filename, \'\\0\',  mode, \'\\0\'); fixed by adjusting buffer size to protect against overflow.'], 'repair_strategy': 'Adjust the buffer length argument in snprintf() to include the actual available size in the buffer, considering the hardcoded and dynamic content that will be written to it, ensuring no overflow occurs.'}
+static CURLcode tftp_send_first(tftp_state_data_t *state, tftp_event_t event)
+{
+  size_t sbytes;
+  ssize_t senddata;
+  const char *mode = "octet";
+  char *filename;
+  struct Curl_easy *data = state->conn->data;
+  CURLcode result = CURLE_OK;
+
+  /* Set ascii mode if -B flag was used */
+  if(data->set.prefer_ascii)
+    mode = "netascii";
+
+  switch(event) {
+
+  case TFTP_EVENT_INIT:    /* Send the first packet out */
+  case TFTP_EVENT_TIMEOUT: /* Resend the first packet out */
+    /* Increment the retry counter, quit if over the limit */
+    state->retries++;
+    if(state->retries>state->retry_max) {
+      state->error = TFTP_ERR_NORESPONSE;
+      state->state = TFTP_STATE_FIN;
+      return result;
+    }
+
+    if(data->set.upload) {
+      /* If we are uploading, send an WRQ */
+      setpacketevent(&state->spacket, TFTP_EVENT_WRQ);
+      state->conn->data->req.upload_fromhere =
+        (char *)state->spacket.data + 4;
+      if(data->state.infilesize != -1)
+        Curl_pgrsSetUploadSize(data, data->state.infilesize);
+    }
+    else {
+      /* If we are downloading, send an RRQ */
+      setpacketevent(&state->spacket, TFTP_EVENT_RRQ);
+    }
+    /* As RFC3617 describes the separator slash is not actually part of the
+       file name so we skip the always-present first letter of the path
+       string. */
+    result = Curl_urldecode(data, &state->conn->data->state.path[1], 0,
+                            &filename, NULL, FALSE);
+    if(result)
+      return result;
+
+    if(strlen(filename) > (state->blksize - strlen(mode) - 4)) {
+      failf(data, "TFTP file name too long\n");
+      free(filename);
+      return CURLE_TFTP_ILLEGAL; /* too long file name field */
+    }
+
+    snprintf((char *)state->spacket.data + 2,
+             state->blksize - strlen(filename) - strlen(mode) - 2,
+             "%s%c%s%c", filename, '\0',  mode, '\0');
+    sbytes = 4 + strlen(filename) + strlen(mode);
+
+    /* optional addition of TFTP options */
+    if(!data->set.tftp_no_options) {
+      char buf[64];
+      /* add tsize option */
+      if(data->set.upload && (data->state.infilesize != -1))
+        snprintf(buf, sizeof(buf), "%
+Vulnerability types: ['heap_overflow']
+
+static CURLcode tftp_receive_packet(struct connectdata *conn)
+{
+  struct Curl_sockaddr_storage fromaddr;
+  curl_socklen_t        fromlen;
+  CURLcode              result = CURLE_OK;
+  struct Curl_easy  *data = conn->data;
+  tftp_state_data_t     *state = (tftp_state_data_t *)conn->proto.tftpc;
+  struct SingleRequest  *k = &data->req;
+
+  /* Receive the packet */
+  fromlen = sizeof(fromaddr);
+  state->rbytes = (int)recvfrom(state->sockfd,
+                                (void *)state->rpacket.data,
+                                state->blksize + 4,
+                                0,
+                                (struct sockaddr *)&fromaddr,
+                                &fromlen);
+  if(state->remote_addrlen == 0) {
+    memcpy(&state->remote_addr, &fromaddr, fromlen);
+    state->remote_addrlen = fromlen;
+  }
+
+  /* Sanity check packet length */
+  if(state->rbytes < 4) {
+    failf(data, "Received too short packet");
+    /* Not a timeout, but how best to handle it? */
+    state->event = TFTP_EVENT_TIMEOUT;
+  }
+  else {
+    /* The event is given by the TFTP packet time */
+    unsigned short event = getrpacketevent(&state->rpacket);
+    state->event = (tftp_event_t)event;
+
+    switch(state->event) {
+    case TFTP_EVENT_DATA:
+      /* Don't pass to the client empty or retransmitted packets */
+      if(state->rbytes > 4 &&
+         (NEXT_BLOCKNUM(state->block) == getrpacketblock(&state->rpacket))) {
+        result = Curl_client_write(conn, CLIENTWRITE_BODY,
+                                   (char *)state->rpacket.data + 4,
+                                   state->rbytes-4);
+        if(result) {
+          tftp_state_machine(state, TFTP_EVENT_ERROR);
+          return result;
+        }
+        k->bytecount += state->rbytes-4;
+        Curl_pgrsSetDownloadCounter(data, (curl_off_t) k->bytecount);
+      }
+      break;
+    case TFTP_EVENT_ERROR:
+    {
+      unsigned short error = getrpacketblock(&state->rpacket);
+      char *str = (char *)state->rpacket.data + 4;
+      size_t strn = state->rbytes - 4;
+      state->error = (tftp_error_t)error;
+      if(Curl_strnlen(str, strn) < strn)
+        infof(data, "TFTP error: %s\n", str);
+      break;
+    }
+    case TFTP_EVENT_ACK:
+      break;
+    case TFTP_EVENT_OACK:
+      result = tftp_parse_option_ack(state,
+                                     (const char *)state->rpacket.data + 2,
+                                     state->rbytes-2);
+      if(result)
+        return result;
+      break;
+    case TFTP_EVENT_RRQ:
+    case TFTP_EVENT_WRQ:
+    default:
+      failf(data, "%s", "Internal error: Unexpected packet");
+      break;
+    }
+
+    /* Update the progress meter */
+    if(Curl_pgrsUpdate(conn)) {
+      tftp_state_machine(state, TFTP_EVENT_ERROR);
+      return CURLE_ABORTED_BY_CALLBACK;
+    }
+  }
+  return result;
+}
+***********Response (CompletionUsage(completion_tokens=981, prompt_tokens=873, total_tokens=1854))***********
+{'Line 14': "The heap overflow vulnerability exists where 'state->rpacket.data' is directly used in 'recvfrom()' without ensuring the buffer is large enough to accept 'state->blksize + 4' bytes. The size of 'state->rpacket.data' must be verified to be at least 'state->blksize + 4' to prevent heap overflow.", 'Resolution': "A check will be added to ensure 'state->blksize' does not exceed the buffer size minus 4 bytes before the 'recvfrom()' call. If 'state->blksize + 4' is beyond the buffer limit, the function will return an error immediately."}
+static CURLcode tftp_receive_packet(struct connectdata *conn)
+{
+  struct Curl_sockaddr_storage fromaddr;
+  curl_socklen_t        fromlen;
+  CURLcode              result = CURLE_OK;
+  struct Curl_easy  *data = conn->data;
+  tftp_state_data_t     *state = (tftp_state_data_t *)conn->proto.tftpc;
+  struct SingleRequest  *k = &data->req;
+
+  /* Receive the packet */
+  fromlen = sizeof(fromaddr);
+  if(state->blksize > sizeof(state->rpacket.data) - 4) {
+    return CURLE_RECV_ERROR;
+  }
+  state->rbytes = (int)recvfrom(state->sockfd,
+                                (void *)state->rpacket.data,
+                                state->blksize + 4,
+                                0,
+                                (struct sockaddr *)&fromaddr,
+                                &fromlen);
+  if(state->remote_addrlen == 0) {
+    memcpy(&state->remote_addr, &fromaddr, fromlen);
+    state->remote_addrlen = fromlen;
+  }
+
+  /* Sanity check packet length */
+  if(state->rbytes < 4) {
+    failf(data, "Received too short packet");
+    /* Not a timeout, but how best to handle it? */
+    state->event = TFTP_EVENT_TIMEOUT;
+  }
+  else {
+    /* The event is given by the TFTP packet time */
+    unsigned short event = getrpacketevent(&state->rpacket);
+    state->event = (tftp_event_t)event;
+
+    switch(state->event) {
+    case TFTP_EVENT_DATA:
+      /* Don't pass to the client empty or retransmitted packets */
+      if(state->rbytes > 4 &&
+         (NEXT_BLOCKNUM(state->block) == getrpacketblock(&state->rpacket))) {
+        result = Curl_client_write(conn, CLIENTWRITE_BODY,
+                                   (char *)state->rpacket.data + 4,
+                                   state->rbytes-4);
+        if(result) {
+          tftp_state_machine(state, TFTP_EVENT_ERROR);
+          return result;
+        }
+        k->bytecount += state->rbytes-4;
+        Curl_pgrsSetDownloadCounter(data, (curl_off_t) k->bytecount);
+      }
+      break;
+    case TFTP_EVENT_ERROR:
+    {
+      unsigned short error = getrpacketblock(&state->rpacket);
+      char *str = (char *)state->rpacket.data + 4;
+      size_t strn = state->rbytes - 4;
+      state->error = (tftp_error_t)error;
+      if(Curl_strnlen(str, strn) < strn)
+        infof(data, "TFTP error: %s\n", str);
+      break;
+    }
+    case TFTP_EVENT_ACK:
+      break;
+    case TFTP_EVENT_OACK:
+      result = tftp_parse_option_ack(state,
+                                     (const char *)state->rpacket.data + 2,
+                                     state->rbytes-2);
+      if(result)
+        return result;
+      break;
+    case TFTP_EVENT_RRQ:
+    case TFTP_EVENT_WRQ:
+    default:
+      failf(data, "%s", "Internal error: Unexpected packet");
+      break;
+    }
+
+    /* Update the progress meter */
+    if(Curl_pgrsUpdate(conn)) {
+      tftp_state_machine(state, TFTP_EVENT_ERROR);
+      return CURLE_ABORTED_BY_CALLBACK;
+    }
+  }
+  return result;
+}
+Vulnerability types: ['declared_buffer']
+
+static CURLcode tftp_connect(struct connectdata *conn, bool *done)
+{
+  tftp_state_data_t *state;
+  int blksize;
+
+  blksize = TFTP_BLKSIZE_DEFAULT;
+
+  state = conn->proto.tftpc = calloc(1, sizeof(tftp_state_data_t));
+  if(!state)
+    return CURLE_OUT_OF_MEMORY;
+
+  /* alloc pkt buffers based on specified blksize */
+  if(conn->data->set.tftp_blksize) {
+    blksize = (int)conn->data->set.tftp_blksize;
+    if(blksize > TFTP_BLKSIZE_MAX || blksize < TFTP_BLKSIZE_MIN)
+      return CURLE_TFTP_ILLEGAL;
+  }
+
+  if(!state->rpacket.data) {
+    state->rpacket.data = calloc(1, blksize + 2 + 2);
+
+    if(!state->rpacket.data)
+      return CURLE_OUT_OF_MEMORY;
+  }
+
+  if(!state->spacket.data) {
+    state->spacket.data = calloc(1, blksize + 2 + 2);
+
+    if(!state->spacket.data)
+      return CURLE_OUT_OF_MEMORY;
+  }
+***********Response (CompletionUsage(completion_tokens=451, prompt_tokens=417, total_tokens=868))***********
+{'description': "In the function 'tftp_connect', the variables 'state->rpacket.data' and 'state->spacket.data' are allocated memory based on the value of 'blksize'. However, 'blksize' validation (checking if it's within defined boundaries) is done after it has already been used to allocate memory for 'state->rpacket.data'. This can lead to a memory allocation that does not respect the global limits set for 'TFTP_BLKSIZE_MAX' and 'TFTP_BLKSIZE_MIN', potentially leading to declared buffer overflows. Fix: The allocation of memory for 'state->rpacket.data' and 'state->spacket.data' should occur after the 'blksize' has been validated and confirmed to be within allowed boundaries."}
+static CURLcode tftp_connect(struct connectdata *conn, bool *done)
+{
+  tftp_state_data_t *state;
+  int blksize;
+
+  blksize = TFTP_BLKSIZE_DEFAULT;
+
+  state = conn->proto.tftpc = calloc(1, sizeof(tftp_state_data_t));
+  if(!state)
+    return CURLE_OUT_OF_MEMORY;
+
+  /* alloc pkt buffers based on specified blksize */
+  if(conn->data->set.tftp_blksize) {
+    blksize = (int)conn->data->set.tftp_blksize;
+    if(blksize > TFTP_BLKSIZE_MAX || blksize < TFTP_BLKSIZE_MIN)
+      return CURLE_TFTP_ILLEGAL;
+  }
+
+  if(!state->rpacket.data) {
+    state->rpacket.data = calloc(1, blksize + 2 + 2);
+
+    if(!state->rpacket.data)
+      return CURLE_OUT_OF_MEMORY;
+  }
+
+  if(!state->spacket.data) {
+    state->spacket.data = calloc(1, blksize + 2 + 2);
+
+    if(!state->spacket.data)
+      return CURLE_OUT_OF_MEMORY;
+  }
+}
+Vulnerability types: ['overflowed_variable','overflowed_call']
+
+CURLcode Curl_ntlm_core_mk_ntlmv2_hash(const char *user, size_t userlen,
+                                       const char *domain, size_t domlen,
+                                       unsigned char *ntlmhash,
+                                       unsigned char *ntlmv2hash)
+{
+  /* Unicode representation */
+  size_t identity_len = (userlen + domlen) * 2;
+  unsigned char *identity = malloc(identity_len);
+  CURLcode result = CURLE_OK;
+
+  if(!identity)
+    return CURLE_OUT_OF_MEMORY;
+
+  ascii_uppercase_to_unicode_le(identity, user, userlen);
+  ascii_to_unicode_le(identity + (userlen << 1), domain, domlen);
+
+  result = Curl_hmac_md5(ntlmhash, 16, identity, curlx_uztoui(identity_len),
+                         ntlmv2hash);
+
+  free(identity);
+
+  return result;
+}
+***********Response (CompletionUsage(completion_tokens=405, prompt_tokens=357, total_tokens=762))***********
+{'lines': ['6', '9-10'], 'description': "The allocation for 'identity' could lead to an overflow in the case when the combined lengths of 'userlen' and 'domlen' are large enough to cause the multiplication by 2 to exceed the limits of 'size_t'. Additionally, the bitwise shift operation (userlen << 1) for offset calculation might not be safe without first checking if 'userlen' can be safely shifted without data loss. I will fix the code by validating the sum of 'userlen' and 'domlen' before performing the multiplication, and modifying the way offsets are calculated to avoid potential undefined behavior."}
+#include <stdlib.h>
+#include <curl/curl.h>
+
+CURLcode Curl_ntlm_core_mk_ntlmv2_hash(const char *user, size_t userlen,
+                                       const char *domain, size_t domlen,
+                                       unsigned char *ntlmhash,
+                                       unsigned char *ntlmv2hash)
+{
+  /* Unicode representation */
+  if (userlen > SIZE_MAX / 2 || domlen > SIZE_MAX / 2 - userlen)
+    return CURLE_OUT_OF_MEMORY;
+  size_t identity_len = (userlen + domlen) * 2;
+  unsigned char *identity = malloc(identity_len);
+  CURLcode result = CURLE_OK;
+
+  if(!identity)
+    return CURLE_OUT_OF_MEMORY;
+
+  ascii_uppercase_to_unicode_le(identity, user, userlen);
+  ascii_to_unicode_le(identity + userlen * 2, domain, domlen);
+
+  result = Curl_hmac_md5(ntlmhash, 16, identity, curlx_uztoui(identity_len),
+                         ntlmv2hash);
+
+  free(identity);
+
+  return result;
+}
+Vulnerability types: ['freed_variable', 'use_after_free']
+
+static cJSON_bool add_item_to_object(cJSON * const object, const char * const string, cJSON * const item, const internal_hooks * const hooks, const cJSON_bool constant_key)
+{
+    if ((object == NULL) || (string == NULL) || (item == NULL))
+    {
+        return false;
+    }
+
+    if (!(item->type & cJSON_StringIsConst) && (item->string != NULL))
+    {
+        hooks->deallocate(item->string);
+    }
+
+    if (constant_key)
+    {
+        item->string = (char*)cast_away_const(string);
+        item->type |= cJSON_StringIsConst;
+    }
+    else
+    {
+        char *key = (char*)cJSON_strdup((const unsigned char*)string, hooks);
+        if (key == NULL)
+        {
+            return false;
+        }
+
+        item->string = key;
+        item->type &= ~cJSON_StringIsConst;
+    }
+
+    return add_item_to_array(object, item);
+}
+***********Response (CompletionUsage(completion_tokens=434, prompt_tokens=380, total_tokens=814))***********
+{'description': "The 'add_item_to_object' function deallocates 'item->string' and may not properly ensure 'item->string' isn't used afterwards, potentially leading to 'use_after_free' vulnerabilities.\nErrors and Fixes:\n1. After freeing 'item->string', code might still proceed with modifications assuming the pointer is valid. This is risky as the memory could be allocated for another purpose thereafter.\n2. The deallocation should occur only when we are certain that 'item->string' will no longer be used without reallocation or reassignment.", 'lines': ["14-16: Deallocates 'item->string'. To prevent 'use after free', modification or a check needs to occur ensuring that after this deallocation, the 'string' is not accessed again unless reassigned or ensured to be not used."]}
+static cJSON_bool add_item_to_object(cJSON * const object, const char * const string, cJSON * const item, const internal_hooks * const hooks, const cJSON_bool constant_key)
+{
+    if ((object == NULL) || (string == NULL) || (item == NULL))
+    {
+        return false;
+    }
+
+    if (!(item->type & cJSON_StringIsConst) && (item->string != NULL))
+    {
+        hooks->deallocate(item->string);
+        item->string = NULL;
+    }
+
+    if (constant_key)
+    {
+        item->string = (char*)cast_away_const(string);
+        item->type |= cJSON_StringIsConst;
+    }
+    else
+    {
+        char *key = (char*)cJSON_strdup((const unsigned char*)string, hooks);
+        if (key == NULL)
+        {
+            return false;
+        }
+
+        item->string = key;
+        item->type &= ~cJSON_StringIsConst;
+    }
+
+    return add_item_to_array(object, item);
+}
+Vulnerability types: ['second_free']
+
+static unsigned char *print(const cJSON * const item, cJSON_bool format, const internal_hooks * const hooks)
+{
+    static const size_t default_buffer_size = 256;
+    printbuffer buffer[1];
+    unsigned char *printed = NULL;
+
+    memset(buffer, 0, sizeof(buffer));
+
+    /* create buffer */
+    buffer->buffer = (unsigned char*) hooks->allocate(default_buffer_size);
+    buffer->length = default_buffer_size;
+    buffer->format = format;
+    buffer->hooks = *hooks;
+    if (buffer->buffer == NULL)
+    {
+        goto fail;
+    }
+
+    /* print the value */
+    if (!print_value(item, buffer))
+    {
+        goto fail;
+    }
+    update_offset(buffer);
+
+    /* check if reallocate is available */
+    if (hooks->reallocate != NULL)
+    {
+        printed = (unsigned char*) hooks->reallocate(buffer->buffer, buffer->offset + 1);
+        buffer->buffer = NULL;
+        if (printed == NULL) {
+            goto fail;
+        }
+    }
+    else /* otherwise copy the JSON over to a new buffer */
+    {
+        printed = (unsigned char*) hooks->allocate(buffer->offset + 1);
+        if (printed == NULL)
+        {
+            goto fail;
+        }
+        memcpy(printed, buffer->buffer, cjson_min(buffer->length, buffer->offset + 1));
+        printed[buffer->offset] = '\0'; /* just to be sure */
+
+        /* free the buffer */
+        hooks->deallocate(buffer->buffer);
+    }
+
+    return printed;
+
+fail:
+    if (buffer->buffer != NULL)
+    {
+        hooks->deallocate(buffer->buffer);
+    }
+
+    if (printed != NULL)
+    {
+        hooks->deallocate(printed);
+    }
+
+    return NULL;
+}
+***********Response (CompletionUsage(completion_tokens=560, prompt_tokens=542, total_tokens=1102))***********
+The vulnerability present is 'double free'. If 'reallocate' fails (causing 'printed' to be NULL), and then control jumps to the 'fail' label where 'printed' is NULL, 'hooks->deallocate(buffer->buffer)' will attempt to free the buffer that was already set to NULL after a successful reallocate operation. Fix involves ensuring that 'buffer->buffer' is not prematurely set to NULL after reallocation and managing it properly even if reallocation fails.
+static unsigned char *print(const cJSON * const item, cJSON_bool format, const internal_hooks * const hooks)
+{
+    static const size_t default_buffer_size = 256;
+    printbuffer buffer[1];
+    unsigned char *printed = NULL;
+
+    memset(buffer, 0, sizeof(buffer));
+
+    /* create buffer */
+    buffer->buffer = (unsigned char*) hooks->allocate(default_buffer_size);
+    buffer->length = default_buffer_size;
+    buffer->format = format;
+    buffer->hooks = *hooks;
+    if (buffer->buffer == NULL)
+    {
+        goto fail;
+    }
+
+    /* print the value */
+    if (!print_value(item, buffer))
+    {
+        goto fail;
+    }
+    update_offset(buffer);
+
+    /* check if reallocate is available */
+    if (hooks->reallocate != NULL)
+    {
+        unsigned char* temp_printed = (unsigned char*) hooks->reallocate(buffer->buffer, buffer->offset + 1);
+        if (temp_printed == NULL) {
+            goto fail;
+        }
+        printed = temp_printed;
+    }
+    else /* otherwise copy the JSON over to a new buffer */
+    {
+        printed = (unsigned char*) hooks->allocate(buffer->offset + 1);
+        if (printed == NULL)
+        {
+            goto fail;
+        }
+        memcpy(printed, buffer->buffer, cjson_min(buffer->length, buffer->offset + 1));
+        printed[buffer->offset] = '\0'; /* just to be sure */
+
+        /* free the buffer */
+        hooks->deallocate(buffer->buffer);
+    }
+
+    return printed;
+
+fail:
+    if (buffer->buffer != NULL)
+    {
+        hooks->deallocate(buffer->buffer);
+    }
+
+    if (printed != NULL)
+    {
+        hooks->deallocate(printed);
+    }
+
+    return NULL;
+}
+Vulnerability types: ['overflowed_variable', 'overflowed_call']
+
+void arrayCopy(Thread* t,
+               object src,
+               int32_t srcOffset,
+               object dst,
+               int32_t dstOffset,
+               int32_t length)
+{
+  if (LIKELY(src and dst)) {
+    if (LIKELY(compatibleArrayTypes(
+            t, objectClass(t, src), objectClass(t, dst)))) {
+      unsigned elementSize = objectClass(t, src)->arrayElementSize();
+
+      if (LIKELY(elementSize)) {
+        intptr_t sl = fieldAtOffset<uintptr_t>(src, BytesPerWord);
+        intptr_t dl = fieldAtOffset<uintptr_t>(dst, BytesPerWord);
+        if (LIKELY(length > 0)) {
+          if (LIKELY(srcOffset >= 0 and srcOffset + length <= sl
+                     and dstOffset >= 0 and dstOffset + length <= dl)) {
+            uint8_t* sbody = &fieldAtOffset<uint8_t>(src, ArrayBody);
+            uint8_t* dbody = &fieldAtOffset<uint8_t>(dst, ArrayBody);
+            if (src == dst) {
+              memmove(dbody + (dstOffset * elementSize),
+                      sbody + (srcOffset * elementSize),
+                      length * elementSize);
+            } else {
+              memcpy(dbody + (dstOffset * elementSize),
+                     sbody + (srcOffset * elementSize),
+                     length * elementSize);
+            }
+
+            if (objectClass(t, dst)->objectMask()) {
+              mark(t, dst, ArrayBody + (dstOffset * BytesPerWord), length);
+            }
+
+            return;
+          } else {
+            throwNew(t, GcIndexOutOfBoundsException::Type);
+          }
+        } else {
+          return;
+        }
+      }
+    }
+  } else {
+    throwNew(t, GcNullPointerException::Type);
+    return;
+  }
+
+  throwNew(t, GcArrayStoreException::Type);
+}
+***********Response (CompletionUsage(completion_tokens=590, prompt_tokens=565, total_tokens=1155))***********
+{'lines': [{'line': 20, 'issue': 'overflowed_variable', 'fix': "Added checks for multiplication causing overflow on 'srcOffset * elementSize' and 'dstOffset * elementSize'."}, {'line': 20, 'issue': 'overflowed_variable', 'fix': "Added checks for multiplication causing overflow on 'length * elementSize'."}]}
+void arrayCopy(Thread* t,
+               object src,
+               int32_t srcOffset,
+               object dst,
+               int32_t dstOffset,
+               int32_t length)
+{
+  if (LIKELY(src and dst)) {
+    if (LIKELY(compatibleArrayTypes(
+            t, objectClass(t, src), objectClass(t, dst)))) {
+      unsigned elementSize = objectClass(t, src)->arrayElementSize();
+
+      if (LIKELY(elementSize)) {
+        intptr_t sl = fieldAtOffset<uintptr_t>(src, BytesPerWord);
+        intptr_t dl = fieldAtOffset<uintptr_t>(dst, BytesPerWord);
+        if (LIKELY(length > 0)) {
+          if (LIKELY(srcOffset >= 0 and srcOffset + length <= sl
+                     and dstOffset >= 0 and dstOffset + length <= dl
+                     and srcOffset <= (INTPTR_MAX / elementSize)
+                     and dstOffset <= (INTPTR_MAX / elementSize)
+                     and length <= (INTPTR_MAX / elementSize))) {
+            uint8_t* sbody = &fieldAtOffset<uint8_t>(src, ArrayBody);
+            uint8_t* dbody = &fieldAtOffset<uint8_t>(dst, ArrayBody);
+            if (src == dst) {
+              memmove(dbody + (dstOffset * elementSize),
+                      sbody + (srcOffset * elementSize),
+                      length * elementSize);
+            } else {
+              memcpy(dbody + (dstOffset * elementSize),
+                     sbody + (srcOffset * elementSize),
+                     length * elementSize);
+            }
+
+            if (objectClass(t, dst)->objectMask()) {
+              mark(t, dst, ArrayBody + (dstOffset * BytesPerWord), length);
+            }
+
+            return;
+          } else {
+            throwNew(t, GcIndexOutOfBoundsException::Type);
+          }
+        } else {
+          return;
+        }
+      }
+    }
+  } else {
+    throwNew(t, GcNullPointerException::Type);
+    return;
+  }
+
+  throwNew(t, GcArrayStoreException::Type);
+}
+Task complete, 20 functions written to results/custom_datasets/Vulchecker/vulchecker_samples_safe.csv, 14841 prompt tokens used, 15189 completion tokens used with gpt-4-turbo
