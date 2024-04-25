@@ -3,10 +3,12 @@ import os.path
 import pandas as pd
 import argparse
 import json
+import logging
 import numpy as np
 from dq_analysis.datasets.data import Data, KNOWN_DATASETS
 from dq_analysis.attributes.consistency import get_consistent_dataset
 from openai import OpenAI
+from sklearn.metrics import f1_score
 
 VALIDATED_SAMPLE_PATH = 'dq_analysis/datasets/all_validated.csv'
 NEEDED_FIELDS = ['ID', 'Vulnerable', 'Function']
@@ -291,6 +293,112 @@ def openai_fix_vulns(dataset_filepath, output_filepath):
           f'prompt tokens used, {completion_tokens} completion tokens used with {model}')
     print(f'Example of response structure, should include exact model used: {completion}')
 
+def openai_run_tests(test_filepath, output_filepath, model="gpt-3.5-turbo", role=""):
+    """
+    Example:
+    python scripts.py --script openai_run_tests\
+        --dataset_filepath='results/custom_datasets/test_set.csv'\
+        --output_filepath='results/testing_runs/gpt-4-turbo_2024-04-25-03'\
+        --model='gpt-3.5-turbo'\
+        --model_role="You are an experienced cyber security expert and skilled coder. "\
+"A function written in C is provided, it may contain one of the top "\
+"Mitre CWE vulnerabilities, it may not. You will carefully inspect the code "\
+"and determine if the code has a serious vulnerability. "\
+"Only output a properly formatted JSON object! "\
+"The first field is 'analysis', you will provide a careful analysis of whether or not this code "\
+"has a serious vulnerability. If it has a vulnerability, has it "\
+"already been mitigated in the code? "\
+"The second field is 'vulnerable', it is a binary field. It must be "\
+"either 1 if the code has a serious vulnerability, "\
+"or 0 if it doesn't."
+    """
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s | %(levelname)s | %(message)s')
+
+    stdout_handler = logging.StreamHandler(sys.stdout)
+    stdout_handler.setLevel(logging.INFO)
+    stdout_handler.setFormatter(formatter)
+
+    file_handler = logging.FileHandler(output_filepath)
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(formatter)
+
+    logger.addHandler(file_handler)
+    logger.addHandler(stdout_handler)
+
+    client = OpenAI()
+    data = pd.read_csv(test_filepath)
+    data = data.sample(frac=1) # shuffle
+    prompt_tokens = 0
+    completion_tokens = 0
+    sample_vulnerability = []
+    predicted_vulnerability = []
+    results = {
+        'tp': 0,
+        'tn': 0,
+        'fp': 0,
+        'fn': 0,
+    }
+    logger.info(f'The role is {role}, the prompt is just the code')
+
+    for i in range(0,len(data)):
+        code = data.iloc[i]["Function"]
+        vulnerable = int(data.iloc[i]["Vulnerable"])
+        max_attempts = 3
+        attempts = 0
+        completion = {}
+        while attempts < max_attempts:
+            attempts += 1
+            try:
+                completion = client.chat.completions.create(
+                    model=model,
+                    response_format={"type": "json_object"},
+                    messages=[
+                        {"role": "system", "content": role},
+                        {"role": "user", "content": code}
+                    ],
+                    temperature=0.3, # max is 2, don't get creative, be correct
+                )
+                result = json.loads(completion.choices[0].message.content)
+                completion_tokens += completion.usage.completion_tokens
+                prompt_tokens += completion.usage.prompt_tokens
+                logger.info(f'***Item {i}, {data.iloc[i]["ID"]} ({completion.usage})***')
+                logger.info(f'******* {vulnerable}, {code}')
+                logger.info(result)
+                predicted = int(result['vulnerable'])
+
+                # Record the result
+                if predicted != 1 and predicted != 0:
+                    raise ValueError(f'Result must not have been properly formatted. ' \
+                                     f'predicted is {predicted}, completion is {completion}')
+
+                logger.info(f'For {data.iloc[i]["ID"]} the predicted is {predicted}, the value is supposed ' \
+                      f'to be {vulnerable}')
+                sample_vulnerability.append(vulnerable)
+                predicted_vulnerability.append(predicted)
+                logger.info(list(zip(sample_vulnerability, predicted_vulnerability)))
+                if predicted == vulnerable and predicted == 1:
+                    results['tp'] += 1
+                elif predicted == vulnerable and predicted == 0:
+                    results['tn'] += 1
+                elif predicted != vulnerable and predicted == 1:
+                    results['fp'] += 1
+                elif predicted != vulnerable and predicted == 0:
+                    results['fn'] +=1
+                attempts = max_attempts
+            except Exception as e:
+                logger.error(f'Failed Item {i}, {data.iloc[i]["ID"]} attempt #{attempts}')
+                logger.error(f'completion object: {completion}')
+                logger.error(repr(e))
+    
+    logger.info(f'Example of response structure, should include exact model used: {completion}')
+    logger.info(f'Task complete, {len(data)} functions written to {output_filepath}, {prompt_tokens} ' +
+          f'prompt tokens used, {completion_tokens} completion tokens used with {model}')
+    logger.info(f'Results: {list(zip(sample_vulnerability, predicted_vulnerability))}')
+    logger.info(f'Detailed Results: {results}')
+    logger.info(f'F1 score: {f1_score(sample_vulnerability, predicted_vulnerability)}')
+
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--script", type=str, default="")
@@ -303,6 +411,8 @@ def get_args():
     parser.add_argument("--max_length", type=int, default=0)
     parser.add_argument("--min_length", type=int, default=0)
     parser.add_argument("--exclude_from_tests", type=str, default="")
+    parser.add_argument("--model", type=str, default="")
+    parser.add_argument("--model_role", type=str, default="")
 
     return parser.parse_args()
 
@@ -315,6 +425,7 @@ if __name__ == '__main__':
         'intersection_consistent_unique': intersection_consistent_unique,
         'filter_by_size': filter_by_size,
         'openai_fix_vulns': openai_fix_vulns,
+        'openai_run_tests': openai_run_tests,
     }
 
 
@@ -362,6 +473,8 @@ if __name__ == '__main__':
         if args.dataset_filepath == "":
             raise ValueError(f'--dataset_filepath must be included with {args.script}')
         openai_fix_vulns(args.dataset_filepath, args.output_filepath)
+    elif (args.script == 'openai_run_tests'):
+        openai_run_tests(args.dataset_filepath, args.output_filepath, args.model, args.model_role)
     else:
         raise ValueError(f'--script is {args.script}, but must be one of: {list(scripts.keys())}')
 
