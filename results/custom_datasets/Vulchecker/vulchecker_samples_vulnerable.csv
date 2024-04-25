@@ -1,9 +1,9 @@
-UID,Vulnerable,Diagnosis,Function
+UID,Vulnerable,Diagnosis,Function,ID
 jasper-version-2.0.11-0,1,"['freed_variable','first_free']","void jas_free(void *ptr)
 {
 	JAS_DBGLOG(100, (""jas_free(%p)\n"", ptr));
 	free(ptr);
-}"
+}",jasper-version-2.0.11-0
 hhvm-HHVM-3.12.10-1,1,"['overflowed_variable','overflowed_call']","String StringUtil::Implode(const Variant& items, const String& delim,
                            const bool checkIsContainer /* = true */) {
   if (checkIsContainer && !isContainer(items)) {
@@ -46,7 +46,7 @@ hhvm-HHVM-3.12.10-1,1,"['overflowed_variable','overflowed_call']","String String
   assert(p - buffer == len);
   s.setSize(len);
   return s;
-}"
+}",hhvm-HHVM-3.12.10-1
 hhvm-HHVM-3.12.10-0,1,"['overflowed_variable','overflowed_call']","static String HHVM_FUNCTION(bcadd, const String& left, const String& right,
                             int64_t scale /* = -1 */) {
   if (scale < 0) scale = BCG(bc_precision);
@@ -65,8 +65,8 @@ hhvm-HHVM-3.12.10-0,1,"['overflowed_variable','overflowed_call']","static String
   bc_free_num(&second);
   bc_free_num(&result);
   return ret;
-}"
-graphite2-1.3.5-2,1,"['heap_overflow']","Machine::Code::Code(bool is_constraint, const byte * bytecode_begin, const byte * const bytecode_end,
+}",hhvm-HHVM-3.12.10-0
+graphite2-1.3.5-2,1,['heap_overflow'],"Machine::Code::Code(bool is_constraint, const byte * bytecode_begin, const byte * const bytecode_end,
            uint8 pre_context, uint16 rule_length, const Silf & silf, const Face & face,
            enum passtype pt, byte * * const _out)
  :  _code(0), _data(0), _data_size(0), _instr_count(0), _max_ref(0), _status(loaded),
@@ -158,8 +158,8 @@ graphite2-1.3.5-2,1,"['heap_overflow']","Machine::Code::Code(bool is_constraint,
 #ifdef GRAPHITE2_TELEMETRY
     telemetry::count_bytes(_data_size + (_instr_count+1)*sizeof(instr));
 #endif
-}"
-graphite2-1.3.5-1,1,"['heap_overflow']","void Slot::setAttr(Segment *seg, attrCode ind, uint8 subindex, int16 value, const SlotMap & map)
+}",graphite2-1.3.5-2
+graphite2-1.3.5-1,1,['heap_overflow'],"void Slot::setAttr(Segment *seg, attrCode ind, uint8 subindex, int16 value, const SlotMap & map)
 {
     if (ind == gr_slatUserDefnV1)
     {
@@ -249,15 +249,15 @@ graphite2-1.3.5-1,1,"['heap_overflow']","void Slot::setAttr(Segment *seg, attrCo
     default :
         break;
     }
-}"
-graphite2-1.3.5-0,1,"['declared_buffer']","template <typename T> T * grzeroalloc(size_t n)
+}",graphite2-1.3.5-1
+graphite2-1.3.5-0,1,['declared_buffer'],"template <typename T> T * grzeroalloc(size_t n)
 {
 #ifdef GRAPHITE2_TELEMETRY
     telemetry::count_bytes(sizeof(T) * n);
 #endif
     return static_cast<T*>(calloc(n, sizeof(T)));
-}"
-freerdp-1.0.2-4,1,"['overflowed_call']","void update_recv_order(rdpUpdate* update, STREAM* s)
+}",graphite2-1.3.5-0
+freerdp-1.0.2-4,1,['overflowed_call'],"void update_recv_order(rdpUpdate* update, STREAM* s)
 {
 	uint8 controlFlags;
 
@@ -269,8 +269,8 @@ freerdp-1.0.2-4,1,"['overflowed_call']","void update_recv_order(rdpUpdate* updat
 		update_recv_secondary_order(update, s, controlFlags);
 	else
 		update_recv_primary_order(update, s, controlFlags);
-}"
-freerdp-1.0.2-3,1,"['overflowed_variable']","void update_recv_secondary_order(rdpUpdate* update, STREAM* s, uint8 flags)
+}",freerdp-1.0.2-4
+freerdp-1.0.2-3,1,['overflowed_variable'],"void update_recv_secondary_order(rdpUpdate* update, STREAM* s, uint8 flags)
 {
 	uint8* next;
 	uint8 orderType;
@@ -347,8 +347,8 @@ freerdp-1.0.2-3,1,"['overflowed_variable']","void update_recv_secondary_order(rd
 	}
 
 	s->p = next;
-}"
-freerdp-1.0.2-2,1,"['overflowed_call']","void gdi_Bitmap_Decompress(rdpContext* context, rdpBitmap* bitmap,
+}",freerdp-1.0.2-3
+freerdp-1.0.2-2,1,['overflowed_call'],"void gdi_Bitmap_Decompress(rdpContext* context, rdpBitmap* bitmap,
 		uint8* data, int width, int height, int bpp, int length, boolean compressed)
 {
 	uint16 size;
@@ -382,8 +382,8 @@ freerdp-1.0.2-2,1,"['overflowed_call']","void gdi_Bitmap_Decompress(rdpContext* 
 	bitmap->compressed = false;
 	bitmap->length = size;
 	bitmap->bpp = bpp;
-}"
-freerdp-1.0.2-1,1,"['overflowed_call']","static int BitBlt_SRCCOPY_8bpp(HGDI_DC hdcDest, int nXDest, int nYDest, int nWidth, int nHeight, HGDI_DC hdcSrc, int nXSrc, int nYSrc)
+}",freerdp-1.0.2-2
+freerdp-1.0.2-1,1,['overflowed_call'],"static int BitBlt_SRCCOPY_8bpp(HGDI_DC hdcDest, int nXDest, int nYDest, int nWidth, int nHeight, HGDI_DC hdcSrc, int nXSrc, int nYSrc)
 {
 	int y;
 	uint8* srcp;
@@ -442,15 +442,15 @@ freerdp-1.0.2-1,1,"['overflowed_call']","static int BitBlt_SRCCOPY_8bpp(HGDI_DC 
 	}
 	
 	return 0;
-}"
-freerdp-1.0.2-0,1,"['overflowed_variable']","INLINE void gdi_RectToCRgn(HGDI_RECT rect, int *x, int *y, int *w, int *h)
+}",freerdp-1.0.2-1
+freerdp-1.0.2-0,1,['overflowed_variable'],"INLINE void gdi_RectToCRgn(HGDI_RECT rect, int *x, int *y, int *w, int *h)
 {
 	*x = rect->left;
 	*y = rect->top;
 	*w = rect->right - rect->left + 1;
 	*h = rect->bottom - rect->top + 1;
-}"
-curl-curl-7_61_1-1,1,"['heap_overflow']","static CURLcode tftp_receive_packet(struct connectdata *conn)
+}",freerdp-1.0.2-0
+curl-curl-7_61_1-1,1,['heap_overflow'],"static CURLcode tftp_receive_packet(struct connectdata *conn)
 {
   struct Curl_sockaddr_storage fromaddr;
   curl_socklen_t        fromlen;
@@ -532,8 +532,8 @@ curl-curl-7_61_1-1,1,"['heap_overflow']","static CURLcode tftp_receive_packet(st
     }
   }
   return result;
-}"
-curl-curl-7_61_1-0,1,"['declared_buffer']","static CURLcode tftp_connect(struct connectdata *conn, bool *done)
+}",curl-curl-7_61_1-1
+curl-curl-7_61_1-0,1,['declared_buffer'],"static CURLcode tftp_connect(struct connectdata *conn, bool *done)
 {
   tftp_state_data_t *state;
   int blksize;
@@ -563,7 +563,7 @@ curl-curl-7_61_1-0,1,"['declared_buffer']","static CURLcode tftp_connect(struct 
 
     if(!state->spacket.data)
       return CURLE_OUT_OF_MEMORY;
-  }"
+  }",curl-curl-7_61_1-0
 curl-curl-7_56_1-0,1,"['overflowed_variable','overflowed_call']","CURLcode Curl_ntlm_core_mk_ntlmv2_hash(const char *user, size_t userlen,
                                        const char *domain, size_t domlen,
                                        unsigned char *ntlmhash,
@@ -586,7 +586,7 @@ curl-curl-7_56_1-0,1,"['overflowed_variable','overflowed_call']","CURLcode Curl_
   free(identity);
 
   return result;
-}"
+}",curl-curl-7_56_1-0
 cjson-v.1.7.3-0,1,"['freed_variable', 'use_after_free']","static cJSON_bool add_item_to_object(cJSON * const object, const char * const string, cJSON * const item, const internal_hooks * const hooks, const cJSON_bool constant_key)
 {
     if ((object == NULL) || (string == NULL) || (item == NULL))
@@ -617,8 +617,8 @@ cjson-v.1.7.3-0,1,"['freed_variable', 'use_after_free']","static cJSON_bool add_
     }
 
     return add_item_to_array(object, item);
-}"
-cjson-v.1.7.2-0,1,"['second_free']","static unsigned char *print(const cJSON * const item, cJSON_bool format, const internal_hooks * const hooks)
+}",cjson-v.1.7.3-0
+cjson-v.1.7.2-0,1,['second_free'],"static unsigned char *print(const cJSON * const item, cJSON_bool format, const internal_hooks * const hooks)
 {
     static const size_t default_buffer_size = 256;
     printbuffer buffer[1];
@@ -680,7 +680,7 @@ fail:
     }
 
     return NULL;
-}"
+}",cjson-v.1.7.2-0
 avian-v1.2.0-0,1,"['overflowed_variable', 'overflowed_call']","void arrayCopy(Thread* t,
                object src,
                int32_t srcOffset,
@@ -730,4 +730,4 @@ avian-v1.2.0-0,1,"['overflowed_variable', 'overflowed_call']","void arrayCopy(Th
   }
 
   throwNew(t, GcArrayStoreException::Type);
-}"
+}",avian-v1.2.0-0
