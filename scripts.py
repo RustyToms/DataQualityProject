@@ -9,7 +9,7 @@ from dq_analysis.attributes.consistency import get_consistent_dataset
 from openai import OpenAI
 
 VALIDATED_SAMPLE_PATH = 'dq_analysis/datasets/all_validated.csv'
-NEEDED_FIELDS = ['ID', 'UID', 'Vulnerable', 'Function']
+NEEDED_FIELDS = ['ID', 'Vulnerable', 'Function']
 
 def save_validated_vulns(dataset, filepath='', overwrite=False, max=99999999, min=0, add_safe_samples=False):
     """
@@ -29,13 +29,13 @@ def save_validated_vulns(dataset, filepath='', overwrite=False, max=99999999, mi
     print(f'Collecting manually validated vulnerabilities from {dataset}')
     data = Data(dataset).get_dataset()
 
-    # Load manually inspected samples
+    # Load manually inspected samples, save only correctly labeled vulnerable samples
     inspected = pd.read_csv(samplepath)
-    inspected = inspected.merge(data, how='left', on=['ID', 'UID', 'Vulnerable'])
-
-    # Save only correctly labeled vulnerable samples
     correct = inspected.loc[inspected['Label'] == 1]
+    correct.reindex(['UID', 'ID', 'Vulnerable'], axis=1)
+    correct = pd.merge(correct,data, on=['UID', 'ID', 'Vulnerable'], how='left')
     correct = correct[NEEDED_FIELDS]
+
     # filter the test set to the same max and min code length as training data
     correct = correct.loc[correct['Function'].str.len() < max]
     correct = correct.loc[correct['Function'].str.len() > min]
@@ -45,12 +45,16 @@ def save_validated_vulns(dataset, filepath='', overwrite=False, max=99999999, mi
     if add_safe_samples:
         # Add safe samples in equal number to vulnerable samples
         # shuffle rows
+        # filter the test set to the same max and min code length as training data
+        data = data.loc[data['Function'].str.len() < max]
+        data = data.loc[data['Function'].str.len() > min]
         data.sample(frac=1)
         safe = data.loc[data['Vulnerable'] == 0]
         safe = safe.iloc[:num_vulns]
         num_safe = len(safe)
         print(f'Length safe: {num_safe}, length vulnerable: {len(correct)}')
-        correct = correct.merge(safe, how='outer', on=NEEDED_FIELDS)
+        print(correct.columns.values)
+        correct = pd.merge(correct,safe[NEEDED_FIELDS], how='outer', on=NEEDED_FIELDS)
         print(f'num total: {len(correct)}')
 
     # add header if file doesn't exist yet or is being overwritten, otherwise append
@@ -58,7 +62,7 @@ def save_validated_vulns(dataset, filepath='', overwrite=False, max=99999999, mi
         if overwrite or not os.path.isfile(filepath):
             correct.to_csv(filepath, mode='w', index=False, header=True)
         else:
-            existing = pd.read_csv(filepath)[NEEDED_FIELDS]
+            existing = pd.read_csv(filepath, usecols=NEEDED_FIELDS)
             correct = correct.merge(existing, how='outer', on=NEEDED_FIELDS)
             correct.to_csv(filepath, mode='w', index=False, header=True)
         print(f'Wrote samples to {filepath}')
@@ -67,21 +71,36 @@ def save_validated_vulns(dataset, filepath='', overwrite=False, max=99999999, mi
     
     return correct
 
-def collect_test_set(filepath="", datasets=KNOWN_DATASETS, max=99999999, min=0):
+def collect_test_set(filepath="results/custom_datasets/test_set.csv", datasets=KNOWN_DATASETS, max=99999999, min=0):
     """
     Cycle through all known datasets collecting validated vulnerability samples,
     write to a csv file
 
     Example:
-    python scripts.py --script collect_test_set
+    python scripts.py --script collect_test_set --output_filepath "results/custom_datasets/test_set.csv"
     """
     overwrite=True
     add_safe_samples = True
-    test_set = save_validated_vulns(datasets[0], filepath, overwrite, max, min, add_safe_samples)
+    test_set = save_validated_vulns(datasets[0], "", overwrite, max, min, add_safe_samples)
     overwrite=False
     for dataset in datasets[1:]:
-        new_set = save_validated_vulns(dataset, filepath, overwrite, max, min, add_safe_samples)
+        new_set = save_validated_vulns(dataset, "", overwrite, max, min, add_safe_samples)
         test_set = test_set.merge(new_set, how='outer', on=NEEDED_FIELDS)
+
+    # Add vulchecker samples
+    vulchecker_samples_path = 'results/custom_datasets/Vulchecker/'
+    vulchecker_vulns = pd.read_csv(vulchecker_samples_path + 'vulchecker_samples_vulnerable.csv')[NEEDED_FIELDS]
+    vulchecker_safe = pd.read_csv(vulchecker_samples_path + 'vulchecker_samples_safe.csv')[NEEDED_FIELDS]
+    vulchecker = vulchecker_vulns.merge(vulchecker_safe, how='outer', on=NEEDED_FIELDS)
+    vulchecker = vulchecker.loc[vulchecker['Function'].str.len() < max]
+    vulchecker = vulchecker.loc[vulchecker['Function'].str.len() > min]
+    print(f'Adding {len(vulchecker)} Vulchecker samples')
+    test_set = test_set.merge(vulchecker, how='outer', on=NEEDED_FIELDS)
+    test_set.sample(frac=1) # shuffle
+
+    if (filepath):
+        test_set.to_csv(filepath, mode='w', index=False, header=True)
+        print(f'Saved test samples to {filepath}')
 
     print(f'Created {len(test_set)} test samples')
     return test_set
@@ -113,7 +132,7 @@ def export_to_jsonl(dataset_filepath, jsonl_filepath, jsonl_structure, dataset=N
     python scripts.py --script export_to_jsonl 
       --output_filepath results/consistent_unique_datasets/Devign.jsonl 
       --dataset_filepath results/consistent_unique_datasets/Devign.csv 
-      --jsonl_structure=code:Function,idx:UID,target:Vulnerable
+      --jsonl_structure=code:Function,idx:ID,target:Vulnerable
     """
     if isinstance(dataset, pd.DataFrame):
         data = dataset
@@ -163,7 +182,7 @@ def make_jsonl_dataset(data_filepath, output_filepath, exclude_from_tests='', ma
     """
     jsonl_structure = {
         'code':'Function',
-        'idx':'UID',
+        'idx':'ID',
         'target':'Vulnerable',
     }
 
@@ -201,7 +220,7 @@ def make_jsonl_dataset(data_filepath, output_filepath, exclude_from_tests='', ma
     eval = eval_vulnerable.merge(eval_safe, how='outer', on=NEEDED_FIELDS)
     eval.iloc[np.random.permutation(len(eval))]  # shuffle rows
     # flag the rows that are *only* in data and not also in eval
-    eval_with_data = data.merge(eval, on=['UID', 'Vulnerable', 'Function'], how='left', indicator=True)
+    eval_with_data = data.merge(eval, on=NEEDED_FIELDS, how='left', indicator=True)
     # Collect the rows that were *only* in data
     train = eval_with_data[eval_with_data['_merge'] == 'left_only']
 
@@ -239,6 +258,7 @@ def openai_fix_vulns(dataset_filepath, output_filepath):
         message = f"Vulnerability types: {vulnerability_type}\n\n{code}"
         max_attempts = 3
         attempts = 0
+        completion = {}
         while attempts < max_attempts:
             attempts += 1
             try:
@@ -248,27 +268,28 @@ def openai_fix_vulns(dataset_filepath, output_filepath):
                     messages=[
                         {"role": "system", "content": role},
                         {"role": "user", "content": message}
-                    ]
-                    # temperature=0.3, # max is 2, don't get creative, be correct
-                    # frequency_penalty=0 # -2 to 2. Use negative value to encourage reuse of terms as we want code duplicated
+                    ],
+                    temperature=0.3, # max is 2, don't get creative, be correct
+                    frequency_penalty=-0.1 # -2 to 2. Use negative value to encourage reuse of terms as we want code duplicated
                 )
                 result = json.loads(completion.choices[0].message.content)
                 completion_tokens += completion.usage.completion_tokens
                 prompt_tokens += completion.usage.prompt_tokens
-                print(f'***Item {i}, {data.iloc[i]["UID"]} ({completion.usage})***')
+                print(f'***Item {i}, {data.iloc[i]["ID"]} ({completion.usage})***')
                 print(message)
                 print(result["analysis"])
                 print(result["code"])
                 data.at[i, "Function"] = result["code"]
                 attempts = max_attempts
             except Exception as e:
-                print(f'Failed Item {i}, {data.iloc[i]["UID"]} attempt #{attempts}')
+                print(f'Failed Item {i}, {data.iloc[i]["ID"]} attempt #{attempts}')
                 print(f'completion object: {completion}')
                 print(repr(e))
     
     data.to_csv(output_filepath, mode='w', index=False, header=True)
     print(f'Task complete, {len(data)} functions written to {output_filepath}, {prompt_tokens} ' +
           f'prompt tokens used, {completion_tokens} completion tokens used with {model}')
+    print(f'Example of response structure, should include exact model used: {completion}')
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -298,8 +319,6 @@ if __name__ == '__main__':
 
 
     if (args.script == 'collect_test_set'):
-        if args.output_filepath == "":
-            raise ValueError(f'--ouput_filepath must be included with {args.script}')
         collect_test_set(args.output_filepath)
     elif (args.script == 'save_validated_vulns'):
         if args.output_filepath == "":
