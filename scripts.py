@@ -12,6 +12,47 @@ from sklearn.metrics import f1_score
 
 VALIDATED_SAMPLE_PATH = 'dq_analysis/datasets/all_validated.csv'
 NEEDED_FIELDS = ['ID', 'Vulnerable', 'Function']
+DANGEROUS_CWES = [
+    {'id': '787', 'description': 'Out-of-bounds write'},
+    {'id': '79', 'description': 'Cross-site scripting'},
+    {'id': '89', 'description': 'SQL injection'},
+    {'id': '416', 'description': 'Use after free'},
+    {'id': '78', 'description': 'OS command injection'},
+    {'id': '20', 'description': 'Improper input validation'},
+    {'id': '125', 'description': 'Out-of-bounds read'},
+    {'id': '22', 'description': 'Path traversal'},
+    {'id': '352', 'description': 'Cross-site request forgery (CSRF)'},
+    {'id': '434', 'description': 'Unrestricted upload of file with dangerous type'},
+    {'id': '862', 'description': 'Missing authorization'},
+    {'id': '476', 'description': 'NULL pointer dereference'},
+    {'id': '287', 'description': 'Improper authentication'},
+    {'id': '190', 'description': 'Integer Overflow or wraparound'},
+    {'id': '502', 'description': 'Deserialization of untrusted data'},
+    {'id': '77', 'description': 'Command injection'},
+    {'id': '119', 'description': 'Improper restriction of operations within the bounds of a memory buffer'},
+    {'id': '798', 'description': 'Useof hard-coded credentials'},
+    {'id': '918', 'description': 'Server-side request forgery (SSRF)'},
+    {'id': '306', 'description': 'Missing authentication for critical function'},
+    {'id': '362', 'description': 'Race condition'},
+    {'id': '269', 'description': 'Improper privilege management'},
+    {'id': '94', 'description': 'Code injection'},
+    {'id': '863', 'description': 'Incorrect authorization'},
+    {'id': '276', 'description': 'Incorrect default permissions'},
+    {'id': '122', 'description': 'Buffer overflow'},
+    {'id': '590', 'description': 'Free of memory not on the heap'},
+    {'id': '242', 'description': 'Use of inherently dangerous function'},
+    {'id': '789', 'description': 'Memory allocation with excessive size value (stack exhaustion)'},
+    {'id': '1341', 'description': 'Multiple release of same resource'},
+    {'id': '672', 'description': 'Operation on a resource after expiration or release'},
+    {'id': '189', 'description': 'Numeric errors'},
+    {'id': '200', 'description': 'Exposure of sensitive information to an unauthorized actor'},
+    {'id': '254', 'description': '7PK security features'},
+    {'id': '264', 'description': 'Permission, privileges, and access controls'},
+    {'id': '284', 'description': 'Improper access control'},
+    {'id': '399', 'description': 'Resource management errors'},
+    {'id': '834', 'description': 'Excessive iteration'},
+    {'id': '843', 'description': 'Type confusion'},
+]
 
 def save_validated_vulns(dataset, filepath='', overwrite=False, max=99999999, min=0, add_safe_samples=False):
     """
@@ -399,6 +440,28 @@ def openai_run_tests(test_filepath, output_filepath, model="gpt-3.5-turbo", role
     logger.info(f'Detailed Results: {results}')
     logger.info(f'F1 score: {f1_score(sample_vulnerability, predicted_vulnerability)}')
 
+def openai_make_vulns(source, target, datatype, key, max=99999999, min=0):
+    """
+    Example:
+    python scripts.py --script openai_make_vulns \
+        --dataset_filepath='dq_analysis/datasets/ReVeal/non-vulnerables.json' \
+        --output_filepath='results/custom_datasets/synthetic/gpt4_reveal.jsonl' \
+        --max_length 2048 --min_length 60  --datatype json --key code
+    """
+    if datatype == 'json':
+        data = pd.read_json(source)
+    elif datatype == 'jsonl':
+        data = pd.read_json(source, lines=True)
+    elif datatype == 'csv':
+        data = pd.read_csv(source)
+    else:
+        raise ValueError('datatype must be "csv", "json", or "jsonl"')
+    
+    data = data.loc[data[key].str.len() < max]
+    data = data.loc[data[key].str.len() > min]
+
+    print(f'nice {len(data)}')
+
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--script", type=str, default="")
@@ -413,6 +476,8 @@ def get_args():
     parser.add_argument("--exclude_from_tests", type=str, default="")
     parser.add_argument("--model", type=str, default="")
     parser.add_argument("--model_role", type=str, default="")
+    parser.add_argument("--datatype", type=str, default="")
+    parser.add_argument("--key", type=str, default="")
 
     return parser.parse_args()
 
@@ -426,6 +491,7 @@ if __name__ == '__main__':
         'filter_by_size': filter_by_size,
         'openai_fix_vulns': openai_fix_vulns,
         'openai_run_tests': openai_run_tests,
+        'openai_make_vulns': openai_make_vulns,
     }
 
 
@@ -433,13 +499,13 @@ if __name__ == '__main__':
         collect_test_set(args.output_filepath)
     elif (args.script == 'save_validated_vulns'):
         if args.output_filepath == "":
-            raise ValueError(f'--ouput_filepath must be included with {args.script}')
+            raise ValueError(f'--output_filepath must be included with {args.script}')
         if args.dataset == "":
             raise ValueError(f'--dataset must be included with {args.script}')
         save_validated_vulns(args.dataset, args.output_filepath, args.overwrite)
     elif (args.script == 'export_to_jsonl'):
         if args.output_filepath == "":
-            raise ValueError(f'--ouput_filepath must be included with {args.script}')
+            raise ValueError(f'--output_filepath must be included with {args.script}')
         if args.dataset_filepath == "":
             raise ValueError(f'--dataset_filepath must be included with {args.script}')
         if not bool(args.jsonl_structure):
@@ -449,13 +515,13 @@ if __name__ == '__main__':
         export_to_jsonl(args.dataset_filepath, args.output_filepath, args.jsonl_structure)
     elif (args.script == 'intersection_consistent_unique'):
         if args.output_filepath == "":
-            raise ValueError(f'--ouput_filepath must be included with {args.script}')
+            raise ValueError(f'--output_filepath must be included with {args.script}')
         if args.dataset == "":
             raise ValueError(f'--dataset must be included with {args.script}')
         intersection_consistent_unique(args.dataset, args.output_filepath)
     elif (args.script == 'filter_by_size'):
         if args.output_filepath == "":
-            raise ValueError(f'--ouput_filepath must be included with {args.script}')
+            raise ValueError(f'--output_filepath must be included with {args.script}')
         if args.dataset_filepath == "":
             raise ValueError(f'--dataset_filepath must be included with {args.script}')
         if args.max_length == 0:
@@ -463,18 +529,28 @@ if __name__ == '__main__':
         filter_by_size(args.dataset_filepath, args.output_filepath, args.max_length, args.min_length)
     elif (args.script == 'make_jsonl_dataset'):
         if args.output_filepath == "":
-            raise ValueError(f'--ouput_filepath must be included with {args.script}')
+            raise ValueError(f'--output_filepath must be included with {args.script}')
         if args.dataset_filepath == "":
             raise ValueError(f'--dataset_filepath must be included with {args.script}')
         make_jsonl_dataset(args.dataset_filepath, args.output_filepath, args.exclude_from_tests, args.max_length, args.min_length)
     elif (args.script == 'openai_fix_vulns'):
         if args.output_filepath == "":
-            raise ValueError(f'--ouput_filepath must be included with {args.script}')
+            raise ValueError(f'--output_filepath must be included with {args.script}')
         if args.dataset_filepath == "":
             raise ValueError(f'--dataset_filepath must be included with {args.script}')
         openai_fix_vulns(args.dataset_filepath, args.output_filepath)
     elif (args.script == 'openai_run_tests'):
         openai_run_tests(args.dataset_filepath, args.output_filepath, args.model, args.model_role)
+    elif(args.script == 'openai_make_vulns'):
+        if args.output_filepath == "":
+            raise ValueError(f'--output_filepath must be included with {args.script}')
+        if args.dataset_filepath == "":
+            raise ValueError(f'--dataset_filepath must be included with {args.script}')
+        if args.datatype == "":
+            raise ValueError(f'--datatype of csv, json, or jsonl must be included with {args.script}')
+        if args.key == "":
+            raise ValueError(f'--key must be included with {args.script}, to find the code in the file')
+        openai_make_vulns(args.dataset_filepath, args.output_filepath, args.datatype, args.key, args.max_length, args.min_length)
     else:
         raise ValueError(f'--script is {args.script}, but must be one of: {list(scripts.keys())}')
 
