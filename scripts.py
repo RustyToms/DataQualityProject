@@ -4,6 +4,9 @@ import pandas as pd
 import argparse
 import json
 import logging
+import time
+import csv
+import re
 import numpy as np
 from dq_analysis.datasets.data import Data, KNOWN_DATASETS
 from dq_analysis.attributes.consistency import get_consistent_dataset
@@ -13,45 +16,45 @@ from sklearn.metrics import f1_score
 VALIDATED_SAMPLE_PATH = 'dq_analysis/datasets/all_validated.csv'
 NEEDED_FIELDS = ['ID', 'Vulnerable', 'Function']
 DANGEROUS_CWES = [
-    {'id': '787', 'description': 'Out-of-bounds write'},
-    {'id': '79', 'description': 'Cross-site scripting'},
-    {'id': '89', 'description': 'SQL injection'},
-    {'id': '416', 'description': 'Use after free'},
-    {'id': '78', 'description': 'OS command injection'},
-    {'id': '20', 'description': 'Improper input validation'},
-    {'id': '125', 'description': 'Out-of-bounds read'},
-    {'id': '22', 'description': 'Path traversal'},
-    {'id': '352', 'description': 'Cross-site request forgery (CSRF)'},
-    {'id': '434', 'description': 'Unrestricted upload of file with dangerous type'},
-    {'id': '862', 'description': 'Missing authorization'},
-    {'id': '476', 'description': 'NULL pointer dereference'},
-    {'id': '287', 'description': 'Improper authentication'},
-    {'id': '190', 'description': 'Integer Overflow or wraparound'},
-    {'id': '502', 'description': 'Deserialization of untrusted data'},
-    {'id': '77', 'description': 'Command injection'},
-    {'id': '119', 'description': 'Improper restriction of operations within the bounds of a memory buffer'},
-    {'id': '798', 'description': 'Useof hard-coded credentials'},
-    {'id': '918', 'description': 'Server-side request forgery (SSRF)'},
-    {'id': '306', 'description': 'Missing authentication for critical function'},
-    {'id': '362', 'description': 'Race condition'},
-    {'id': '269', 'description': 'Improper privilege management'},
-    {'id': '94', 'description': 'Code injection'},
-    {'id': '863', 'description': 'Incorrect authorization'},
-    {'id': '276', 'description': 'Incorrect default permissions'},
-    {'id': '122', 'description': 'Buffer overflow'},
-    {'id': '590', 'description': 'Free of memory not on the heap'},
-    {'id': '242', 'description': 'Use of inherently dangerous function'},
-    {'id': '789', 'description': 'Memory allocation with excessive size value (stack exhaustion)'},
-    {'id': '1341', 'description': 'Multiple release of same resource'},
-    {'id': '672', 'description': 'Operation on a resource after expiration or release'},
-    {'id': '189', 'description': 'Numeric errors'},
-    {'id': '200', 'description': 'Exposure of sensitive information to an unauthorized actor'},
-    {'id': '254', 'description': '7PK security features'},
-    {'id': '264', 'description': 'Permission, privileges, and access controls'},
-    {'id': '284', 'description': 'Improper access control'},
-    {'id': '399', 'description': 'Resource management errors'},
-    {'id': '834', 'description': 'Excessive iteration'},
-    {'id': '843', 'description': 'Type confusion'},
+    {'id': 'CWE-787', 'description': 'Out-of-bounds write'},
+    {'id': 'CWE-79', 'description': 'Cross-site scripting'},
+    {'id': 'CWE-89', 'description': 'SQL injection'},
+    {'id': 'CWE-416', 'description': 'Use after free'},
+    {'id': 'CWE-78', 'description': 'OS command injection'},
+    {'id': 'CWE-20', 'description': 'Improper input validation'},
+    {'id': 'CWE-125', 'description': 'Out-of-bounds read'},
+    {'id': 'CWE-22', 'description': 'Path traversal'},
+    {'id': 'CWE-352', 'description': 'Cross-site request forgery (CSRF)'},
+    {'id': 'CWE-434', 'description': 'Unrestricted upload of file with dangerous type'},
+    {'id': 'CWE-862', 'description': 'Missing authorization'},
+    {'id': 'CWE-476', 'description': 'NULL pointer dereference'},
+    {'id': 'CWE-287', 'description': 'Improper authentication'},
+    {'id': 'CWE-190', 'description': 'Integer Overflow or wraparound'},
+    {'id': 'CWE-502', 'description': 'Deserialization of untrusted data'},
+    {'id': 'CWE-77', 'description': 'Command injection'},
+    {'id': 'CWE-119', 'description': 'Improper restriction of operations within the bounds of a memory buffer'},
+    {'id': 'CWE-798', 'description': 'Useof hard-coded credentials'},
+    {'id': 'CWE-918', 'description': 'Server-side request forgery (SSRF)'},
+    {'id': 'CWE-306', 'description': 'Missing authentication for critical function'},
+    {'id': 'CWE-362', 'description': 'Race condition'},
+    {'id': 'CWE-269', 'description': 'Improper privilege management'},
+    {'id': 'CWE-94', 'description': 'Code injection'},
+    {'id': 'CWE-863', 'description': 'Incorrect authorization'},
+    {'id': 'CWE-276', 'description': 'Incorrect default permissions'},
+    {'id': 'CWE-122', 'description': 'Buffer overflow'},
+    {'id': 'CWE-590', 'description': 'Free of memory not on the heap'},
+    {'id': 'CWE-242', 'description': 'Use of inherently dangerous function'},
+    {'id': 'CWE-789', 'description': 'Memory allocation with excessive size value (stack exhaustion)'},
+    {'id': 'CWE-1341', 'description': 'Multiple release of same resource'},
+    {'id': 'CWE-672', 'description': 'Operation on a resource after expiration or release'},
+    {'id': 'CWE-189', 'description': 'Numeric errors'},
+    {'id': 'CWE-200', 'description': 'Exposure of sensitive information to an unauthorized actor'},
+    {'id': 'CWE-254', 'description': '7PK security features'},
+    {'id': 'CWE-264', 'description': 'Permission, privileges, and access controls'},
+    {'id': 'CWE-284', 'description': 'Improper access control'},
+    {'id': 'CWE-399', 'description': 'Resource management errors'},
+    {'id': 'CWE-834', 'description': 'Excessive iteration'},
+    {'id': 'CWE-843', 'description': 'Type confusion'},
 ]
 
 def save_validated_vulns(dataset, filepath='', overwrite=False, max=99999999, min=0, add_safe_samples=False):
@@ -279,60 +282,131 @@ def make_jsonl_dataset(data_filepath, output_filepath, exclude_from_tests='', ma
     print(f'Wrote {len(train)} balanced training samples, {len(eval)} balanced evaluation samples,'+
         f'and {len(test)} balanced test samples to {output_filepath}')
 
-def openai_fix_vulns(dataset_filepath, output_filepath):
+def _normalize_c_code(code):
+    # Remove trailing whitespaces
+    code = re.sub(r'[ \t]+$', '', code, flags=re.MULTILINE)
+    # Reduce spaces around operators and punctuation, except within string literals
+    code = re.sub(r'(?<!["\'])\s*([{}();,])\s*', r'\1', code)
+    code = re.sub(r'\s*([+\-*/=<>&|!%])\s*', r'\1', code)
+    # Normalize newlines: remove extra newlines, keep only one
+    code = re.sub(r'\n\s*\n', '\n', code)
+    # Minimize spaces around assignment and comparison operators
+    code = re.sub(r'\s*([=<>!]=|&&|\|\|)\s*', r' \1 ', code)
+    # Ensure one space after commas in function calls/declarations, no space before
+    code = re.sub(r',\s*', ', ', code)
+    return code
+
+def _openai_fix_vulns(role, code, model, logger):
     client = OpenAI()
-    data = pd.read_csv(dataset_filepath)
-    model="gpt-4-turbo"
+    attempts = 0
+    error_count = 0
+    max_errors = 1
+    max_attempts = 3
+    clean_code = ''
     prompt_tokens = 0
-    completion_tokens = 0
-    role = "You are an amazing cyber security expert and skilled coder. " \
-        "You get a list of security vulnerabilities and C code that contains one or " \
-        "more of each vulnerability, which you will fix. Do NOT change what the " \
-        "code does, or variable or function names, or add new comments, " \
-        "and keep code changes succinct. But you MUST find and fix the vulnerability or vulnerabilities. " \
-        "Only output a properly formatted JSON object! " \
-        "The first field is 'analysis', with a brief description of " \
-        "which lines have the vulnerabilities and how they will be fixed. " \
-        "The second field is 'code', containing the fixed code. Do not truncate any code, all code must be returned. Do not change whitespace or escaped characters, and match the existing indentation."
+    response_tokens = 0
+    normalized_code = _normalize_c_code(code)
+
+    while attempts < max_attempts and error_count < max_errors:
+        attempts += 1
+        clean_code = ''
+        try:
+            completion = client.chat.completions.create(
+                model=model,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": role},
+                    {"role": "user", "content": normalized_code}
+                ],
+                temperature=0.3, # max is 2, don't get creative, be correct
+                frequency_penalty=-0.1, # -2 to 2. Use negative value to encourage reuse of terms as we want code duplicated
+                logit_bias={
+                    "1734": -50, # try to stop the infinite \n glitch, different than actual new line
+                    "5061": -50, # try to stop the infinite \t glitch, different than actual tab
+                },
+            )
+            result = json.loads(completion.choices[0].message.content)
+            prompt_tokens = completion.usage.prompt_tokens
+            response_tokens = completion.usage.completion_tokens
+
+            logger.info(f'***({completion.usage} {completion.model})***')
+            logger.info(code)
+            logger.info(result["analysis"])
+            clean_code = result["code"]
+            # check if the code is of similar length
+            normalized_clean_code = _normalize_c_code(clean_code)
+            delta = abs(len(normalized_clean_code) - len(normalized_code))
+            percent = delta / len(normalized_code)
+            logger.info(f'Cleaned code:\n{clean_code}')
+            if percent > 0.1 and delta > 110:                
+                logger.error(f'Clean code length is too different, {len(normalized_clean_code)} chars after whitespace removal vs original {len(normalized_code)} chars after whitespace removal')
+                clean_code = ''
+                continue
+            else:
+                logger.info(f'Code cleaned, {len(normalized_clean_code)} chars after whitespace removal vs original {len(normalized_code)} chars after whitespace removal')
+            break
+        except Exception as e:
+            error_count += 1
+            clean_code = ''
+            logger.error(f'Failed to clean code, attempt #{attempts}')
+            logger.error(f'completion object: {completion}')
+            logger.error(repr(e))
     
-    for i in range(0,len(data)):
-        vulnerability_type = data.iloc[i]["Diagnosis"]
-        code = data.iloc[i]["Function"]
-        message = f"Vulnerability types: {vulnerability_type}\n\n{code}"
-        max_attempts = 3
-        attempts = 0
-        completion = {}
-        while attempts < max_attempts:
-            attempts += 1
-            try:
-                completion = client.chat.completions.create(
-                    model=model,
-                    response_format={"type": "json_object"},
-                    messages=[
-                        {"role": "system", "content": role},
-                        {"role": "user", "content": message}
-                    ],
-                    temperature=0.3, # max is 2, don't get creative, be correct
-                    frequency_penalty=-0.1 # -2 to 2. Use negative value to encourage reuse of terms as we want code duplicated
-                )
-                result = json.loads(completion.choices[0].message.content)
-                completion_tokens += completion.usage.completion_tokens
-                prompt_tokens += completion.usage.prompt_tokens
-                print(f'***Item {i}, {data.iloc[i]["ID"]} ({completion.usage})***')
-                print(message)
-                print(result["analysis"])
-                print(result["code"])
-                data.at[i, "Function"] = result["code"]
-                attempts = max_attempts
-            except Exception as e:
-                print(f'Failed Item {i}, {data.iloc[i]["ID"]} attempt #{attempts}')
-                print(f'completion object: {completion}')
-                print(repr(e))
-    
+    if not clean_code:
+        logger.info('---------Unable to clean code, returning original code----------------')
+        clean_code = code
+
+    return {
+        'code': clean_code,
+        'prompt_tokens': prompt_tokens,
+        'response_tokens': response_tokens,
+    }
+
+def openai_fix_vulns(dataset_filepath, output_filepath, max=9999999, min=0):
+    """
+    Example:
+    python scripts.py --script openai_fix_vulns\
+        --dataset_filepath='results/custom_datasets/test_set.csv'\
+        --output_filepath='results/custom_datasets/test_set_clean.csv'\
+        --max 2048 --min 0
+    """
+    role = "You are an elite cyber security expert and coder. A C function is provided. You will ensure it has no security vulnerabilities, and fix any you find. Do NOT change what the code does, or variable or function names. Don't add new comments. Keep code changes succinct. But find and fix any vulnerabilities you find. Only output a properly formatted JSON object! The first field is 'analysis', with a very brief description of any vulnerabilities and how they will be fixed. The second field is 'code', containing the fixed code. Do not truncate any code, all code must be returned. Do not change whitespace or escaped characters, do not replace spaces with tabs or tabs with spaces, match the existing indentation.  Except do not return more than 4 '\\n' or '\\t' characters, or any other non-whitespace token in a row!"
+    data = _filter_by_size(dataset_filepath, 2048, 0)
+    # turn into a list of dicts
+    data_l = data.to_dict(orient='records')
+    logger = _make_logger(logging.INFO, output_filepath+'-logs.txt')
+    prompt_tokens = 0
+    response_tokens = 0    
+
+    for i in range(0,len(data_l)):
+        if data_l[i]['Vulnerable'] == 0:
+            code = data_l[i]["Function"]
+            clean_code_dict = _openai_fix_vulns(role, code, "gpt-4-turbo", logger)
+            data_l[i]["Function"] = clean_code_dict['code']
+            prompt_tokens += clean_code_dict['prompt_tokens']
+            response_tokens += clean_code_dict['response_tokens']
+
+    data = pd.DataFrame(data_l)
     data.to_csv(output_filepath, mode='w', index=False, header=True)
-    print(f'Task complete, {len(data)} functions written to {output_filepath}, {prompt_tokens} ' +
-          f'prompt tokens used, {completion_tokens} completion tokens used with {model}')
-    print(f'Example of response structure, should include exact model used: {completion}')
+    logger.info(f'Task complete, {len(data)} functions written to {output_filepath}, cost {prompt_tokens} prompt tokens and {response_tokens} response tokens')
+
+def _make_logger(level, output_filepath=''):
+    logger = logging.getLogger()
+    logger.setLevel(level)
+    formatter = logging.Formatter('%(asctime)s | %(levelname)s | %(message)s')
+
+    stdout_handler = logging.StreamHandler(sys.stdout)
+    stdout_handler.setLevel(level)
+    stdout_handler.setFormatter(formatter)
+    logger.addHandler(stdout_handler)
+
+    if output_filepath:
+        file_handler = logging.FileHandler(output_filepath)
+        file_handler.setLevel(level)
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+
+    return logger
 
 def openai_run_tests(test_filepath, output_filepath, model="gpt-3.5-turbo", role=""):
     """
@@ -353,21 +427,7 @@ def openai_run_tests(test_filepath, output_filepath, model="gpt-3.5-turbo", role
 "either 1 if the code has a serious vulnerability, "\
 "or 0 if it doesn't."
     """
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
-    formatter = logging.Formatter('%(asctime)s | %(levelname)s | %(message)s')
-
-    stdout_handler = logging.StreamHandler(sys.stdout)
-    stdout_handler.setLevel(logging.INFO)
-    stdout_handler.setFormatter(formatter)
-
-    file_handler = logging.FileHandler(output_filepath)
-    file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(formatter)
-
-    logger.addHandler(file_handler)
-    logger.addHandler(stdout_handler)
-
+    logger = _make_logger(logging.INFO, output_filepath)
     client = OpenAI()
     data = pd.read_csv(test_filepath)
     data = data.sample(frac=1) # shuffle
@@ -440,27 +500,189 @@ def openai_run_tests(test_filepath, output_filepath, model="gpt-3.5-turbo", role
     logger.info(f'Detailed Results: {results}')
     logger.info(f'F1 score: {f1_score(sample_vulnerability, predicted_vulnerability)}')
 
-def openai_make_vulns(source, target, datatype, key, max=99999999, min=0):
+def openai_make_vulns(source, target, key, max=99999999, min=0):
     """
+    Load dataset of non-vulnerable code
+    submit to chatgpt with list of desired vulnerabilities
+    Select appropriate vulnerability for this code
+    Have chatgpt clean the code
+    Save clean code, have chatgpt inject the vulnerability and save vulnerable code
+    Keep track of how many of each vulnerability is used, try to balance
+    No need to use pandas for this
+
     Example:
     python scripts.py --script openai_make_vulns \
         --dataset_filepath='dq_analysis/datasets/ReVeal/non-vulnerables.json' \
         --output_filepath='results/custom_datasets/synthetic/gpt4_reveal.jsonl' \
-        --max_length 2048 --min_length 60  --datatype json --key code
+        --max_length 2048 --min_length 60  --key code
     """
-    if datatype == 'json':
-        data = pd.read_json(source)
-    elif datatype == 'jsonl':
-        data = pd.read_json(source, lines=True)
-    elif datatype == 'csv':
-        data = pd.read_csv(source)
-    else:
-        raise ValueError('datatype must be "csv", "json", or "jsonl"')
-    
-    data = data.loc[data[key].str.len() < max]
-    data = data.loc[data[key].str.len() > min]
+    logger = _make_logger(logging.INFO, target + '-logs.txt')
+    # create a dict with CWE ids as keys matched with their description
+    # create a dict with CWE ids as keys to keep track of samples
+    vuln_types = {}
+    vuln_counts = {}
+    for vuln in DANGEROUS_CWES:
+        vuln_counts[vuln['id']] = 0
+        vuln_types[vuln['id']] = vuln['id'] + ' ' + vuln['description']
+    filetype = re.search('\w+$', source)[0]
+    client = OpenAI()
+    prompt_tokens = 0
+    completion_tokens = 0
+    model='gpt-3.5-turbo'
 
-    print(f'nice {len(data)}')
+    if filetype == 'json':
+        with open(source, "r") as f:
+            source_list = json.load(f)
+    elif filetype == 'jsonl':
+        code_list = []
+        with open(source, "r") as f:
+            _source_list = list(f)
+        for json_dict in _source_list:
+            source_list.append(json.loads(json_dict))
+    elif filetype == 'csv':
+        with open(source, "r") as f:
+            source_list = list(csv.DictReader(f))
+    else:
+        raise ValueError('filetype must be ".csv", ".json", or ".jsonl"')
+
+    # filter by code length
+    code_list = []
+    for item in source_list:
+        code = item[key]
+        if len(code) > min and len(code) < max:
+            code_list.append(code)
+
+    sample_index = -1
+    logger.info(f'Beginning calls to OpenAI with {len(code_list)} samples')
+    for sample in code_list[:1]:
+        role = f"You are an elite cyber security expert and coder. You are creating vulnerabilities in C functions to use in a dataset to train a cybersecurity model. A function written in C is provided. Analyze the code and determine which, if any of a list of vulnerabilies could be introduced into the code with minimal code changes. Only return a properly formatted JSON object! There will be two fields. The first will be 'analysis' with a 1-2 sentence explanation of your choice. The second will be 'vulnerability' and it will include only a CWE identifier, like 'CWE-000'. But if no vulnerability will work for this code, return 'None' instead of a CWE. Potential vulnerabilities: {list(vuln_types.keys())}"
+        attempts = 0
+        time_in_ms = int(time.time() * 1000)
+        maxed_vulns = []
+        max_attempts = 1
+        vuln_code = ''
+        clean_code = ''
+        num_success = 0
+        prompt_tokens = 0
+        response_tokens = 0
+        sample_index += 1
+        
+        while attempts < max_attempts:
+            attempts += 1
+            vuln_code = ''
+            clean_code = ''
+
+            # Step 1: determine which vulnerability can be used
+            try:
+                completion = client.chat.completions.create(
+                    model=model,
+                    response_format={"type": "json_object"},
+                    messages=[
+                        {"role": "system", "content": role},
+                        {"role": "user", "content": sample}
+                    ],
+                    temperature=0.4, # max is 2, don't get creative, be correct
+                )
+                result = json.loads(completion.choices[0].message.content)
+                prompt_tokens += completion.usage.prompt_tokens
+                response_tokens += completion.usage.completion_tokens
+                vuln_type = result["vulnerability"]
+                
+                # move to the next code sample if no vulnerability selected
+                if vuln_type.lower() == 'none':
+                    break
+
+                # Throw error if CWE is not formatted correctly or in the list
+                if not vuln_type in vuln_types:
+                    raise ValueError(f'"{vuln_type}" is not in the vuln_types list')
+
+                logger.info(f'Index: {sample_index}, vulnerability: {vuln_type}, analysis: {result["analysis"]}\n({completion.usage})')
+            except Exception as e:
+                logger.error(f'Failure on attempt #attempt #{attempts} to analyze code sample for appropriate vulnerability at sample index {sample_index}')
+                logger.error(f'Code sample:\n{sample}')
+                logger.error(f'completion object: {completion}')
+                logger.error(repr(e))
+                # go to next iteration of the while loop, do not go to Step 2
+                continue
+
+            # Step 2: Save a clean version of the code
+            try:
+                clean_role = "You are an elite cyber security expert and coder. A C function is provided. You will ensure it has no security vulnerabilities, and fix any you find. Do NOT change what the code does, or variable or function names. Don't add new comments. Keep code changes succinct. But find and fix any vulnerabilities you find. Only output a properly formatted JSON object! The first field is 'analysis', with a very brief description of any vulnerabilities and how they will be fixed. The second field is 'code', containing the fixed code. Do not truncate any code, all code must be returned. Do not change whitespace or escaped characters, do not replace spaces with tabs or tabs with spaces, match the existing indentation.  Except do not return more than 4 '\\n' or '\\t' characters, or any other non-whitespace token in a row! Do not remove comments. Example response: {{'analysis': 'Analysis goes here', 'code': 'code goes here'}}"
+                clean_code_dict = _openai_fix_vulns(clean_role, sample, model, logger)
+                clean_code = clean_code_dict['code']
+                prompt_tokens += clean_code_dict['prompt_tokens']
+                response_tokens += clean_code_dict['response_tokens']
+                safe_sample = {
+                    'idx': f'{vuln_type}-safe-{time_in_ms}',
+                    'code': clean_code,
+                    'target': 0,
+                }
+
+            except Exception as e:
+                logger.error(f'Failure on attempt #attempt #{attempts} to clean code sample at sample index {sample_index}')
+                logger.error(f'Code sample:\n{sample}')
+                logger.error(repr(e))
+                # go to next iteration of the while loop, do not go to Step 3
+                continue
+
+            # Step 3: Create a vulnerable version of the code
+            try:
+                vuln_role = f"You are an elite cyber security expert and coder. You are creating vulnerabilities in C functions to use in a dataset to train a cybersecurity model. A function written in C is provided. Modify this function to include: {vuln_types[vuln_type]}. Do NOT change what the code does, or variable or function names, or add new comments, and keep code changes succinct. Only return a properly formatted JSON object. There will be two fields. The first will be 'analysis' with a 1-2 sentence explanation of how you will insert the vulnerability. The second will be 'code' and it will include the changed code. Do not truncate any code, all code must be returned. Do not change whitespace or escaped characters, and match the existing indentation. Except do not return more than three '\\n' or '\\t' characters, or any other non-whitespace token in a row! Example response: {{'analysis': 'Analysis goes here', 'code': 'code goes here'}}"
+                completion = client.chat.completions.create(
+                    model=model,
+                    response_format={"type": "json_object"},
+                    messages=[
+                        {"role": "system", "content": vuln_role},
+                        {"role": "user", "content": clean_code}
+                    ],
+                    temperature=0.3, # max is 2, don't get creative, be correct
+                    frequency_penalty=-0.1, # -2 to 2. Use negative value to encourage reuse of terms as we want code duplicated
+                    logit_bias={
+                        "1734": -50, # try to stop the infinite \n glitch, different than actual new line
+                        "5061": -50, # try to stop the infinite \t glitch, different than actual tab
+                    },
+                )
+                result = json.loads(completion.choices[0].message.content)
+                vuln_code = result["code"]
+                vuln_sample = {
+                    'idx': f'{vuln_type}-vuln-{time_in_ms}',
+                    'code': vuln_code,
+                    'target': 1,
+                }
+                prompt_tokens += completion.usage.prompt_tokens
+                response_tokens += completion.usage.completion_tokens
+                logger.info(f'***Vulnerability generation complete ({completion.usage} {completion.model})***')
+                logger.info(result["analysis"])
+                logger.info(f'Vulnerable code:\n{vuln_code}')
+
+            except Exception as e:
+                logger.error(f'Failed to inject vulnerability, attempt #{attempts}')
+                logger.error(f'completion object: {completion}')
+                logger.error(repr(e))
+                # go to next iteration of the while loop, do not save results
+                continue
+
+        if clean_code and vuln_code:
+            vuln_counts[vuln_type]+=1
+            if vuln_counts[vuln_type] >= 20:
+                maxed_vulns.append(vuln_type)
+                vuln_counts.pop(vuln_type)
+                vuln_types.pop(vuln_type)
+
+        # append to jsonl file
+        with open(target, 'a') as f:
+            f.write(json.dumps(safe_sample) + "\n")
+            f.write(json.dumps(vuln_sample) + "\n")   
+
+        num_success += 1
+        logger.info(f'Added another code pair at sample index {sample_index}. Created {num_success} safe/vulnerable code pairs and used {prompt_tokens} prompt tokens and {response_tokens} response tokens so far.')
+
+        if len(vuln_types.keys()) < 6:
+            break;
+    
+    # All done, report
+    logger.info(f'Completed generating the dataset at sample index {sample_index} out of {len(code_list)} samples. Created {num_success} safe/vulnerable code pairs, saved at {target}. Used {prompt_tokens} prompt tokens and {response_tokens} response tokens')
+
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -476,7 +698,6 @@ def get_args():
     parser.add_argument("--exclude_from_tests", type=str, default="")
     parser.add_argument("--model", type=str, default="")
     parser.add_argument("--model_role", type=str, default="")
-    parser.add_argument("--datatype", type=str, default="")
     parser.add_argument("--key", type=str, default="")
 
     return parser.parse_args()
@@ -538,7 +759,7 @@ if __name__ == '__main__':
             raise ValueError(f'--output_filepath must be included with {args.script}')
         if args.dataset_filepath == "":
             raise ValueError(f'--dataset_filepath must be included with {args.script}')
-        openai_fix_vulns(args.dataset_filepath, args.output_filepath)
+        openai_fix_vulns(args.dataset_filepath, args.output_filepath, args.max_length, args.min_length)
     elif (args.script == 'openai_run_tests'):
         openai_run_tests(args.dataset_filepath, args.output_filepath, args.model, args.model_role)
     elif(args.script == 'openai_make_vulns'):
@@ -546,11 +767,9 @@ if __name__ == '__main__':
             raise ValueError(f'--output_filepath must be included with {args.script}')
         if args.dataset_filepath == "":
             raise ValueError(f'--dataset_filepath must be included with {args.script}')
-        if args.datatype == "":
-            raise ValueError(f'--datatype of csv, json, or jsonl must be included with {args.script}')
         if args.key == "":
             raise ValueError(f'--key must be included with {args.script}, to find the code in the file')
-        openai_make_vulns(args.dataset_filepath, args.output_filepath, args.datatype, args.key, args.max_length, args.min_length)
+        openai_make_vulns(args.dataset_filepath, args.output_filepath, args.key, args.max_length, args.min_length)
     else:
         raise ValueError(f'--script is {args.script}, but must be one of: {list(scripts.keys())}')
 
