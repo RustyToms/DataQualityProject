@@ -175,10 +175,7 @@ def export_to_jsonl(dataset_filepath, jsonl_filepath, jsonl_structure, dataset=N
     as described in jsonl_structure
     
     Example:
-    python scripts.py --script export_to_jsonl 
-      --output_filepath results/consistent_unique_datasets/Devign.jsonl 
-      --dataset_filepath results/consistent_unique_datasets/Devign.csv 
-      --jsonl_structure=code:Function,idx:ID,target:Vulnerable
+    python scripts.py --script export_to_jsonl --output_filepath results/custom_datasets/test_set_clean9.jsonl --dataset_filepath results/custom_datasets/test_set_clean9.csv --jsonl_structure=code:Function,idx:ID,target:Vulnerable
     """
     if isinstance(dataset, pd.DataFrame):
         data = dataset
@@ -296,20 +293,20 @@ def _normalize_c_code(code):
     code = re.sub(r',\s*', ', ', code)
     return code
 
-def _openai_fix_vulns(role, code, model, logger):
+def _openai_modify_code(role, code, model, logger):
     client = OpenAI()
     attempts = 0
     error_count = 0
     max_errors = 1
     max_attempts = 3
-    clean_code = ''
+    changed_code = ''
     prompt_tokens = 0
     response_tokens = 0
     normalized_code = _normalize_c_code(code)
 
     while attempts < max_attempts and error_count < max_errors:
         attempts += 1
-        clean_code = ''
+        changed_code = ''
         try:
             completion = client.chat.completions.create(
                 model=model,
@@ -332,43 +329,43 @@ def _openai_fix_vulns(role, code, model, logger):
             logger.info(f'***({completion.usage} {completion.model})***')
             logger.info(code)
             logger.info(result["analysis"])
-            clean_code = result["code"]
+            changed_code = result["code"]
             # check if the code is of similar length
-            normalized_clean_code = _normalize_c_code(clean_code)
-            delta = abs(len(normalized_clean_code) - len(normalized_code))
+            normalized_changed_code = _normalize_c_code(changed_code)
+            delta = abs(len(normalized_changed_code) - len(normalized_code))
             percent = delta / len(normalized_code)
-            logger.info(f'Cleaned code:\n{clean_code}')
+            logger.info(f'Modified code:\n{changed_code}')
             if percent > 0.1 and delta > 110:                
-                logger.error(f'Clean code length is too different, {len(normalized_clean_code)} chars after whitespace removal vs original {len(normalized_code)} chars after whitespace removal')
-                clean_code = ''
+                logger.error(f'Modified code length is too different, {len(normalized_changed_code)} chars after whitespace removal vs original {len(normalized_code)} chars after whitespace removal')
+                changed_code = ''
                 continue
             else:
-                logger.info(f'Code cleaned, {len(normalized_clean_code)} chars after whitespace removal vs original {len(normalized_code)} chars after whitespace removal')
+                logger.info(f'Code modified, {len(normalized_changed_code)} chars after whitespace removal vs original {len(normalized_code)} chars after whitespace removal')
             break
         except Exception as e:
             error_count += 1
-            clean_code = ''
-            logger.error(f'Failed to clean code, attempt #{attempts}')
+            changed_code = ''
+            logger.error(f'Failed to change code, attempt #{attempts}')
             logger.error(f'completion object: {completion}')
             logger.error(repr(e))
     
-    if not clean_code:
-        logger.info('---------Unable to clean code, returning original code----------------')
-        clean_code = code
+    if not changed_code:
+        logger.info('---------Unable to change code, returning original code----------------')
+        changed_code = code
 
     return {
-        'code': clean_code,
+        'code': changed_code,
         'prompt_tokens': prompt_tokens,
         'response_tokens': response_tokens,
     }
 
-def openai_fix_vulns(dataset_filepath, output_filepath, max=9999999, min=0):
+def openai_fix_vulns(dataset_filepath, output_filepath, model, max=9999999, min=0):
     """
     Example:
     python scripts.py --script openai_fix_vulns\
         --dataset_filepath='results/custom_datasets/test_set.csv'\
         --output_filepath='results/custom_datasets/test_set_clean.csv'\
-        --max 2048 --min 0
+        --model='gpt-4-turbo' --max 2048 --min 0
     """
     role = "You are an elite cyber security expert and coder. A C function is provided. You will ensure it has no security vulnerabilities, and fix any you find. Do NOT change what the code does, or variable or function names. Don't add new comments. Keep code changes succinct. But find and fix any vulnerabilities you find. Only output a properly formatted JSON object! The first field is 'analysis', with a very brief description of any vulnerabilities and how they will be fixed. The second field is 'code', containing the fixed code. Do not truncate any code, all code must be returned. Do not change whitespace or escaped characters, do not replace spaces with tabs or tabs with spaces, match the existing indentation.  Except do not return more than 4 '\\n' or '\\t' characters, or any other non-whitespace token in a row!"
     data = _filter_by_size(dataset_filepath, 2048, 0)
@@ -381,14 +378,14 @@ def openai_fix_vulns(dataset_filepath, output_filepath, max=9999999, min=0):
     for i in range(0,len(data_l)):
         if data_l[i]['Vulnerable'] == 0:
             code = data_l[i]["Function"]
-            clean_code_dict = _openai_fix_vulns(role, code, "gpt-4-turbo", logger)
+            clean_code_dict = _openai_modify_code(role, code, model, logger)
             data_l[i]["Function"] = clean_code_dict['code']
             prompt_tokens += clean_code_dict['prompt_tokens']
             response_tokens += clean_code_dict['response_tokens']
 
     data = pd.DataFrame(data_l)
     data.to_csv(output_filepath, mode='w', index=False, header=True)
-    logger.info(f'Task complete, {len(data)} functions written to {output_filepath}, cost {prompt_tokens} prompt tokens and {response_tokens} response tokens')
+    logger.info(f'Task complete, {len(data)} functions written to {output_filepath}, cost {prompt_tokens} prompt tokens and {response_tokens} response tokens {model}')
 
 def _make_logger(level, output_filepath=''):
     logger = logging.getLogger()
@@ -500,7 +497,7 @@ def openai_run_tests(test_filepath, output_filepath, model="gpt-3.5-turbo", role
     logger.info(f'Detailed Results: {results}')
     logger.info(f'F1 score: {f1_score(sample_vulnerability, predicted_vulnerability)}')
 
-def openai_make_vulns(source, target, key, max=99999999, min=0):
+def openai_make_vulns(source, target, model, key, max=99999999, min=0):
     """
     Load dataset of non-vulnerable code
     submit to chatgpt with list of desired vulnerabilities
@@ -511,10 +508,7 @@ def openai_make_vulns(source, target, key, max=99999999, min=0):
     No need to use pandas for this
 
     Example:
-    python scripts.py --script openai_make_vulns \
-        --dataset_filepath='dq_analysis/datasets/ReVeal/non-vulnerables.json' \
-        --output_filepath='results/custom_datasets/synthetic/gpt4_reveal.jsonl' \
-        --max_length 2048 --min_length 60  --key code
+    python scripts.py --script openai_make_vulns --dataset_filepath='dq_analysis/datasets/ReVeal/non-vulnerables.json' --output_filepath='results/custom_datasets/synthetic/gpt4_reveal.jsonl' --model='gpt-4-turbo' --max_length 1600 --min_length 60  --key code
     """
     logger = _make_logger(logging.INFO, target + '-logs.txt')
     # create a dict with CWE ids as keys matched with their description
@@ -527,8 +521,10 @@ def openai_make_vulns(source, target, key, max=99999999, min=0):
     filetype = re.search('\w+$', source)[0]
     client = OpenAI()
     prompt_tokens = 0
-    completion_tokens = 0
-    model='gpt-3.5-turbo'
+    response_tokens = 0
+    num_success = 0
+    max_of_type = 20
+    maxed_vulns = []
 
     if filetype == 'json':
         with open(source, "r") as f:
@@ -545,26 +541,23 @@ def openai_make_vulns(source, target, key, max=99999999, min=0):
     else:
         raise ValueError('filetype must be ".csv", ".json", or ".jsonl"')
 
-    # filter by code length
+    # normalize and filter by code length
     code_list = []
     for item in source_list:
-        code = item[key]
+        code = _normalize_c_code(item[key]) # remove whitespaces
         if len(code) > min and len(code) < max:
             code_list.append(code)
 
     sample_index = -1
     logger.info(f'Beginning calls to OpenAI with {len(code_list)} samples')
-    for sample in code_list[:1]:
-        role = f"You are an elite cyber security expert and coder. You are creating vulnerabilities in C functions to use in a dataset to train a cybersecurity model. A function written in C is provided. Analyze the code and determine which, if any of a list of vulnerabilies could be introduced into the code with minimal code changes. Only return a properly formatted JSON object! There will be two fields. The first will be 'analysis' with a 1-2 sentence explanation of your choice. The second will be 'vulnerability' and it will include only a CWE identifier, like 'CWE-000'. But if no vulnerability will work for this code, return 'None' instead of a CWE. Potential vulnerabilities: {list(vuln_types.keys())}"
+    for sample in code_list:
+        # the list of vulnerabilities will change as we get enough examples of specific vulnerabilties
+        role = f"You are an elite cyber security expert and coder. You are creating vulnerabilities in C functions to use in a dataset to train a cybersecurity model. A function written in C is provided. Analyze the code and determine which, if any of a list of vulnerabilies could be introduced into the code with minimal code changes. Only return a properly formatted JSON object! There will be two fields. The first will be 'analysis' with a 1-2 sentence explanation of your choice. The second will be 'vulnerability' and it will include only a CWE identifier, like 'CWE-000'. But if no vulnerability will work for this code, return 'None' instead of a CWE. \nPotential vulnerabilities: {list(vuln_types.keys())}"
         attempts = 0
         time_in_ms = int(time.time() * 1000)
-        maxed_vulns = []
         max_attempts = 1
         vuln_code = ''
         clean_code = ''
-        num_success = 0
-        prompt_tokens = 0
-        response_tokens = 0
         sample_index += 1
         
         while attempts < max_attempts:
@@ -607,8 +600,10 @@ def openai_make_vulns(source, target, key, max=99999999, min=0):
 
             # Step 2: Save a clean version of the code
             try:
-                clean_role = "You are an elite cyber security expert and coder. A C function is provided. You will ensure it has no security vulnerabilities, and fix any you find. Do NOT change what the code does, or variable or function names. Don't add new comments. Keep code changes succinct. But find and fix any vulnerabilities you find. Only output a properly formatted JSON object! The first field is 'analysis', with a very brief description of any vulnerabilities and how they will be fixed. The second field is 'code', containing the fixed code. Do not truncate any code, all code must be returned. Do not change whitespace or escaped characters, do not replace spaces with tabs or tabs with spaces, match the existing indentation.  Except do not return more than 4 '\\n' or '\\t' characters, or any other non-whitespace token in a row! Do not remove comments. Example response: {{'analysis': 'Analysis goes here', 'code': 'code goes here'}}"
-                clean_code_dict = _openai_fix_vulns(clean_role, sample, model, logger)
+                clean_role = "You are an elite cyber security expert and coder. A C function is provided. You will ensure it has no security vulnerabilities, and fix any you find. Do NOT change what the code does, or variable or function names. Don't add new comments. Keep code changes succinct. But fix any vulnerabilities you find. Only output a properly formatted JSON object! The first field is 'analysis', with a very brief description of any vulnerabilities and how they will be fixed. The second field is 'code', containing the fixed code. Do not truncate any code, all code must be returned. Do not change whitespace or escaped characters, do not replace spaces with tabs or tabs with spaces, match the existing indentation.  Except do not return more than 4 consecutive '\\n' or '\\t' characters, or any other non-whitespace token! Do not remove comments. Example response: {{'analysis': 'Analysis goes here', 'code': 'code goes here'}}"
+                # _openai_modify_code has code to check obvious mistakes and retry
+                # Returns the original code if it needs to retry to many times
+                clean_code_dict = _openai_modify_code(clean_role, sample, model, logger)
                 clean_code = clean_code_dict['code']
                 prompt_tokens += clean_code_dict['prompt_tokens']
                 response_tokens += clean_code_dict['response_tokens']
@@ -619,7 +614,7 @@ def openai_make_vulns(source, target, key, max=99999999, min=0):
                 }
 
             except Exception as e:
-                logger.error(f'Failure on attempt #attempt #{attempts} to clean code sample at sample index {sample_index}')
+                logger.error(f'Failure on attempt #{attempts} to clean code sample at sample index {sample_index}')
                 logger.error(f'Code sample:\n{sample}')
                 logger.error(repr(e))
                 # go to next iteration of the while loop, do not go to Step 3
@@ -628,29 +623,16 @@ def openai_make_vulns(source, target, key, max=99999999, min=0):
             # Step 3: Create a vulnerable version of the code
             try:
                 vuln_role = f"You are an elite cyber security expert and coder. You are creating vulnerabilities in C functions to use in a dataset to train a cybersecurity model. A function written in C is provided. Modify this function to include: {vuln_types[vuln_type]}. Do NOT change what the code does, or variable or function names, or add new comments, and keep code changes succinct. Only return a properly formatted JSON object. There will be two fields. The first will be 'analysis' with a 1-2 sentence explanation of how you will insert the vulnerability. The second will be 'code' and it will include the changed code. Do not truncate any code, all code must be returned. Do not change whitespace or escaped characters, and match the existing indentation. Except do not return more than three '\\n' or '\\t' characters, or any other non-whitespace token in a row! Example response: {{'analysis': 'Analysis goes here', 'code': 'code goes here'}}"
-                completion = client.chat.completions.create(
-                    model=model,
-                    response_format={"type": "json_object"},
-                    messages=[
-                        {"role": "system", "content": vuln_role},
-                        {"role": "user", "content": clean_code}
-                    ],
-                    temperature=0.3, # max is 2, don't get creative, be correct
-                    frequency_penalty=-0.1, # -2 to 2. Use negative value to encourage reuse of terms as we want code duplicated
-                    logit_bias={
-                        "1734": -50, # try to stop the infinite \n glitch, different than actual new line
-                        "5061": -50, # try to stop the infinite \t glitch, different than actual tab
-                    },
-                )
-                result = json.loads(completion.choices[0].message.content)
-                vuln_code = result["code"]
+                vuln_code_dict = _openai_modify_code(vuln_role, clean_code, model, logger)
+                vuln_code = vuln_code_dict['code']
+                prompt_tokens += vuln_code_dict['prompt_tokens']
+                response_tokens += vuln_code_dict['response_tokens']
+
                 vuln_sample = {
                     'idx': f'{vuln_type}-vuln-{time_in_ms}',
                     'code': vuln_code,
                     'target': 1,
                 }
-                prompt_tokens += completion.usage.prompt_tokens
-                response_tokens += completion.usage.completion_tokens
                 logger.info(f'***Vulnerability generation complete ({completion.usage} {completion.model})***')
                 logger.info(result["analysis"])
                 logger.info(f'Vulnerable code:\n{vuln_code}')
@@ -664,7 +646,7 @@ def openai_make_vulns(source, target, key, max=99999999, min=0):
 
         if clean_code and vuln_code:
             vuln_counts[vuln_type]+=1
-            if vuln_counts[vuln_type] >= 20:
+            if vuln_counts[vuln_type] >= max_of_type:
                 maxed_vulns.append(vuln_type)
                 vuln_counts.pop(vuln_type)
                 vuln_types.pop(vuln_type)
@@ -682,6 +664,7 @@ def openai_make_vulns(source, target, key, max=99999999, min=0):
     
     # All done, report
     logger.info(f'Completed generating the dataset at sample index {sample_index} out of {len(code_list)} samples. Created {num_success} safe/vulnerable code pairs, saved at {target}. Used {prompt_tokens} prompt tokens and {response_tokens} response tokens')
+    logger.info(f'{vuln_counts}\nGenerated {max_of_type} versions of the following: {maxed_vulns}')
 
 
 def get_args():
@@ -759,7 +742,9 @@ if __name__ == '__main__':
             raise ValueError(f'--output_filepath must be included with {args.script}')
         if args.dataset_filepath == "":
             raise ValueError(f'--dataset_filepath must be included with {args.script}')
-        openai_fix_vulns(args.dataset_filepath, args.output_filepath, args.max_length, args.min_length)
+        if args.model == "":
+            raise ValueError(f'--model must be included with {args.script}')
+        openai_fix_vulns(args.dataset_filepath, args.output_filepath, args.model, args.max_length, args.min_length)
     elif (args.script == 'openai_run_tests'):
         openai_run_tests(args.dataset_filepath, args.output_filepath, args.model, args.model_role)
     elif(args.script == 'openai_make_vulns'):
@@ -767,9 +752,11 @@ if __name__ == '__main__':
             raise ValueError(f'--output_filepath must be included with {args.script}')
         if args.dataset_filepath == "":
             raise ValueError(f'--dataset_filepath must be included with {args.script}')
+        if args.model == "":
+            raise ValueError(f'--model must be included with {args.script}')
         if args.key == "":
             raise ValueError(f'--key must be included with {args.script}, to find the code in the file')
-        openai_make_vulns(args.dataset_filepath, args.output_filepath, args.key, args.max_length, args.min_length)
+        openai_make_vulns(args.dataset_filepath, args.output_filepath, args.model, args.key, args.max_length, args.min_length)
     else:
         raise ValueError(f'--script is {args.script}, but must be one of: {list(scripts.keys())}')
 
