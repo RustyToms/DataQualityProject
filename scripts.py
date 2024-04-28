@@ -542,6 +542,7 @@ def openai_make_vulns(source, target, model, key, max=99999999, min=0):
     num_success = 0
     max_of_type = 20
     max_delta = 200  # how many characters the AI can extend or shrink the code
+    vulnerability_assessment_temperature = 0.4
 
     if filetype == 'json':
         with open(source, "r") as f:
@@ -591,7 +592,8 @@ def openai_make_vulns(source, target, model, key, max=99999999, min=0):
                         {"role": "system", "content": role},
                         {"role": "user", "content": sample}
                     ],
-                    temperature=0.4, # max is 2, don't get creative, be correct
+                    # max is 2, don't want to be very creative unless we need to generate more samples
+                    temperature=vulnerability_assessment_temperature, 
                 )
                 result = json.loads(completion.choices[0].message.content)
                 prompt_tokens += completion.usage.prompt_tokens
@@ -600,6 +602,7 @@ def openai_make_vulns(source, target, model, key, max=99999999, min=0):
                 
                 # move to the next code sample if no vulnerability selected
                 if vuln_type.lower() == 'none':
+                    logger.info(f'"None", no vulnerability selected for the code at index {sample_index}')
                     break
 
                 # Throw error if CWE is not formatted correctly or in the list
@@ -608,7 +611,8 @@ def openai_make_vulns(source, target, model, key, max=99999999, min=0):
 
                 logger.info(f'Index: {sample_index}, vulnerability: {vuln_type}, analysis: {result["analysis"]}\n({completion.usage})')
             except Exception as e:
-                logger.error(f'Failure on attempt #attempt #{attempts} to analyze code sample for appropriate vulnerability at sample index {sample_index}')
+                logger.error(f'Failure on attempt #{attempts} to analyze code sample for appropriate vulnerability at sample index {sample_index}')
+                logger.error(f'Role: {role}')
                 logger.error(f'Code sample:\n{sample}')
                 logger.error(f'completion object: {completion}')
                 logger.error(repr(e))
@@ -631,6 +635,7 @@ def openai_make_vulns(source, target, model, key, max=99999999, min=0):
                     'code': clean_code,
                     'target': 0,
                 }
+                logger.info('Code cleaning complete')
 
             except Exception as e:
                 logger.error(f'Failure on attempt #{attempts} to clean code sample at sample index {sample_index}')
@@ -655,7 +660,6 @@ def openai_make_vulns(source, target, model, key, max=99999999, min=0):
                 }
                 logger.info(f'***Vulnerability generation complete ({completion.usage} {completion.model})***')
                 logger.info(result["analysis"])
-                logger.info(f'Vulnerable code:\n{vuln_code}')
 
             except Exception as e:
                 logger.error(f'Failed to inject vulnerability, attempt #{attempts}')
@@ -678,18 +682,23 @@ def openai_make_vulns(source, target, model, key, max=99999999, min=0):
 
             num_success += 1
             logger.info(f'Added another code pair at sample index {sample_index}. Created {num_success} safe/vulnerable code pairs and used {prompt_tokens} prompt tokens and {response_tokens} response tokens so far.')
+            logger.info(vuln_counts)
 
         remaining_vulns = len(vuln_types.keys())
-        if remaining_vulns < 8:
-            # allow the AI to make more code changes so it can address more vulnerabilities
-            max_delta = 300
-            max_of_type = 10
-        if remaining_vulns < 5:
-            # allow the AI to make more code changes so it can address more vulnerabilities
-            max_delta = 400
-            max_of_type = 7
-        if remaining_vulns < 2:
+        if remaining_vulns < 3:
             break;
+        elif remaining_vulns < 6:
+            # allow the AI to make more code changes so it can address more vulnerabilities
+            max_delta = 500
+            max_of_type = 7
+            vulnerability_assessment_temperature = 1
+            logging.info(f'Increasing max_delta to {max_delta}, max_of_type to {max_of_type}, and vulnerability_assessment_temperature to {vulnerability_assessment_temperature}')
+        elif remaining_vulns < 9:
+            # allow the AI to make more code changes so it can address more vulnerabilities
+            max_delta = 350
+            max_of_type = 10
+            vulnerability_assessment_temperature = 0.7
+            logging.info(f'Increasing max_delta to {max_delta}, max_of_type to {max_of_type}, and vulnerability_assessment_temperature to {vulnerability_assessment_temperature}')
     
     # All done, report
     logger.info(f'Completed generating the dataset at sample index {sample_index} out of {len(code_list)} samples. Created {num_success} safe/vulnerable code pairs, saved at {target}. Used {prompt_tokens} prompt tokens and {response_tokens} response tokens')
