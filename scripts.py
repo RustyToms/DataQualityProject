@@ -8,6 +8,7 @@ import logging
 import time
 import csv
 import re
+import random
 import numpy as np
 from dq_analysis.datasets.data import Data, KNOWN_DATASETS
 from dq_analysis.attributes.consistency import get_consistent_dataset
@@ -561,7 +562,9 @@ def openai_make_vulns(source, target, model, key, max=99999999, min=0):
     num_success = 0
     max_of_type = 20
     max_delta = 200  # how many characters the AI can extend or shrink the code
+    uid_list = []
     vulnerability_assessment_temperature = 0.5
+    source_project='Big-Vul'
 
     if filetype == 'json':
         with open(source, "r") as f:
@@ -573,6 +576,8 @@ def openai_make_vulns(source, target, model, key, max=99999999, min=0):
         for json_dict in _source_list:
             source_list.append(json.loads(json_dict))
     elif filetype == 'csv':
+        # enable csv to read in large fields
+        csv.field_size_limit(sys.maxsize//10000)
         with open(source, "r") as f:
             source_list = list(csv.DictReader(f))
     else:
@@ -581,15 +586,21 @@ def openai_make_vulns(source, target, model, key, max=99999999, min=0):
     # normalize and filter by code length
     code_list = []
     for item in source_list:
-        code = _normalize_c_code(item[key]) # remove whitespaces
-        if len(code) > min and len(code) < max:
-            code_list.append(code)
+        # Only use non-vulnerable code
+        if item['Vulnerable'] == '0':
+            code = _normalize_c_code(item[key]) # remove whitespaces
+            if len(code) > min and len(code) < max:
+                code_list.append((code, item['UID']))
 
-    sample_index = 680
+    sample_index = -1
+    index_range = list(range(0, len(code_list)))
+    random.shuffle(index_range)
     logger.info(f'Beginning calls to OpenAI with {len(code_list)} samples')
-    for sample in code_list[681:]:
+    for i in index_range:
+        sample = code_list[i][0]
+        uid = code_list[i][1]
         # the list of vulnerabilities will change as we get enough examples of specific vulnerabilties
-        role = f"You are an elite cyber security expert and coder. You are creating vulnerabilities in C functions to use in a dataset to train a cybersecurity model. A function written in C is provided. Analyze the code and determine which, if any, of a list of vulnerabilies could be introduced into the code with minimal code changes, as if a medium skilled developer did it accidentally. Only return a properly formatted JSON object! There will be two fields. The first will be 'analysis' with a very short explanation of your choice. The second will be 'vulnerability' and it will include only a CWE identifier, like 'CWE-000'. Only choose from the vulnerabilties in this list, or if no vulnerability can be added to this code in a natural way, return 'None' instead. \nPotential vulnerabilities: {list(vuln_types.keys())}"
+        role = f"You are an elite cyber security expert and coder. You are creating vulnerabilities in C functions to use in a dataset to train a cybersecurity model. A function written in C is provided. Analyze the code and determine which, if any, of a list of vulnerabilies could be introduced into the code with minimal code changes, as if a medium skilled developer did it accidentally. Only return a properly formatted JSON object! There will be two fields. The first will be 'analysis' with a very short explanation of your choice. The second will be 'vulnerability' and it will include only a CWE identifier, like 'CWE-000'. Only choose from the vulnerabilties in this list, or if no vulnerability can be added to this code in a natural way, return 'None' instead. Be creative about how you would add one of the vulnerabilities to the code. \nPotential vulnerabilities: {list(vuln_types.keys())}"
         attempts = 0
         time_in_ms = int(time.time() * 1000)
         max_attempts = 1
@@ -652,6 +663,8 @@ def openai_make_vulns(source, target, model, key, max=99999999, min=0):
                     'idx': f'{vuln_type}-safe-{time_in_ms}',
                     'code': clean_code,
                     'target': 0,
+                    'source': source_project,
+                    'source_uid': uid,
                 }
                 logger.info('Code cleaning complete')
 
@@ -664,7 +677,7 @@ def openai_make_vulns(source, target, model, key, max=99999999, min=0):
 
             # Step 3: Create a vulnerable version of the code
             try:
-                vuln_role = f"You are an elite cyber security expert and coder. You are creating vulnerabilities in C functions to use in a dataset to train a cybersecurity model. A function written in C is provided. Modify this function to include: {vuln_types[vuln_type]}. Include the vulnerabilty as if a medium skilled developer did it accidentally. Include the entire vulnerability in the function and don't assume another function is vulnerable. Do NOT change what the function returns and the important aspects of how it works, or variable or function names, or add new comments. Keep code changes succinct! Only return a properly formatted JSON object. There will be two fields. The first will be 'analysis' with a 1-2 sentence explanation of how you will insert the vulnerability. The second will be 'code' and it will include the changed code. Do not truncate any code, all code must be returned. Do not change whitespace or escaped characters, and match the existing indentation. Don't add comments. Except do not return more than three '\\n' or '\\t' characters, or any other non-whitespace token in a row! Example response: {{'analysis': 'Analysis goes here', 'code': 'code goes here'}}"
+                vuln_role = f"You are an elite cyber security expert and coder. You are creating vulnerabilities in C functions to use in a dataset to train a cybersecurity model. A function written in C is provided. Modify this function to include: {vuln_types[vuln_type]}. Include the vulnerabilty as if a medium skilled developer did it accidentally. Include the entire vulnerability in the function and don't assume another function is vulnerable. Make sure it's a real vulnerability, not just a potential vulnerability. Do NOT change what the function returns and the important aspects of how it works, or variable or function names, or add new comments. Keep code changes succinct! Only return a properly formatted JSON object. There will be two fields. The first will be 'analysis' with a 1-2 sentence explanation of how you will insert the vulnerability. The second will be 'code' and it will include the changed code. Do not truncate any code, all code must be returned. Do not change whitespace or escaped characters, and match the existing indentation. Don't add comments. Except do not return more than three '\\n' or '\\t' characters, or any other non-whitespace token in a row! Example response: {{'analysis': 'Analysis goes here', 'code': 'code goes here'}}"
                 vuln_code_dict = _openai_modify_code(vuln_role, clean_code, model, logger, max_delta)
                 vuln_code = vuln_code_dict['code']
                 prompt_tokens += vuln_code_dict['prompt_tokens']
@@ -675,6 +688,8 @@ def openai_make_vulns(source, target, model, key, max=99999999, min=0):
                     'idx': f'{vuln_type}-vuln-{time_in_ms}',
                     'code': vuln_code,
                     'target': 1,
+                    'source': source_project,
+                    'source_uid': uid,
                 }
                 logger.info(f'***Vulnerability generation complete ({completion.usage} {completion.model})***')
                 logger.info(result["analysis"])
@@ -688,6 +703,7 @@ def openai_make_vulns(source, target, model, key, max=99999999, min=0):
 
         if clean_code and vuln_code:
             vuln_counts[vuln_type]+=1
+            uid_list.append(uid)
             if vuln_counts[vuln_type] >= max_of_type:
                 # Don't get more of that vulnerability type
                 vuln_types.pop(vuln_type)
@@ -699,7 +715,7 @@ def openai_make_vulns(source, target, model, key, max=99999999, min=0):
                 f.write(json.dumps(vuln_sample) + "\n")
 
             num_success += 1
-            logger.info(f'Added another code pair at sample index {sample_index}. Created {num_success} safe/vulnerable code pairs and used {prompt_tokens} prompt tokens and {response_tokens} response tokens so far.')
+            logger.info(f'Added another code pair with sample #{sample_index}, using uid {uid}. Created {num_success} safe/vulnerable code pairs and used {prompt_tokens} prompt tokens and {response_tokens} response tokens so far.')
             logger.info(vuln_counts)
 
         remaining_vulns = len(vuln_types.keys())
@@ -719,6 +735,10 @@ def openai_make_vulns(source, target, model, key, max=99999999, min=0):
             logging.info(f'Increasing max_delta to {max_delta}, max_of_type to {max_of_type}, and vulnerability_assessment_temperature to {vulnerability_assessment_temperature}')
     
     # All done, report
+    logger.info('UIDs used:')
+    logger.info(uid_list)
+    logger.info('Dataset indexes used:')
+    logger.info(index_range[:sample_index+1])
     logger.info(f'Completed generating the dataset at sample index {sample_index} out of {len(code_list)} samples. Created {num_success} safe/vulnerable code pairs, saved at {target}. Used {prompt_tokens} prompt tokens and {response_tokens} response tokens')
     logger.info(vuln_counts)
 
