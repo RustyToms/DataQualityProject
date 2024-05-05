@@ -1,3 +1,8 @@
+## This is a copy of the reproduction package for the following paper:
+R. Croft, M. A. Babar and M. M. Kholoosi, "Data Quality for Software Vulnerability Datasets," 2023 IEEE/ACM 45th International Conference on Software Engineering (ICSE), Melbourne, Australia, 2023, pp. 121-133, doi: 10.1109/ICSE48619.2023.00022.
+
+All changes past the initial commit are my fault. - Jonathan "Rusty" Toms
+
 # SV Data Quality Requirements
 
 This codebase contains the data and scripts necessary for examining the data quality requirements of vulnerability datasets.
