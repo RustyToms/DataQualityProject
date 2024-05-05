@@ -204,13 +204,32 @@ def export_to_jsonl(dataset_filepath, jsonl_filepath, jsonl_structure, dataset=N
     print(f'Exported {dataset_filepath} to {jsonl_filepath} in jsonl format,'+
           f' matching these keys to columns: {jsonl_structure}')
 
-def _filter_by_size(data_filepath, max, min):
-    data = pd.read_csv(data_filepath)
+def _get_dataframe_from_filepath(filepath):
+    filetype = re.search('\w+$', filepath)[0]
+    if filetype == 'json':
+        with open(filepath, "r") as f:
+            code_list = json.load(f)
+        data = pd.DataFrame(code_list)
+    elif filetype == 'jsonl':
+        code_list = []
+        with open(filepath, "r") as f:
+            for line in f:
+                code_list.append(json.loads(line))
+        data = pd.DataFrame(code_list)
+    elif filetype == 'csv':
+        data = pd.read_csv(filepath)
+    else:
+        raise ValueError('filetype must be ".csv", ".json", or ".jsonl"')
+
+    return data
+
+def _filter_by_size(data_filepath, codekey, max, min):
+    data = _get_dataframe_from_filepath(data_filepath)
     start_length = len(data)
-    filtered_data = data.loc[data['Function'].str.len() < max]
+    filtered_data = data.loc[data[codekey].str.len() < max]
     length = len(filtered_data)
 
-    filtered_data = filtered_data.loc[data['Function'].str.len() > min]
+    filtered_data = filtered_data.loc[data[codekey].str.len() > min]
     min_length = len(filtered_data)
     print(f'{length} samples are below {max} characters, {start_length - length} '+
           f'are {max} characters or more. {length-min_length} samples are at or below '+
@@ -226,7 +245,7 @@ def filter_by_size(data_filepath, output_filepath, max, min):
       --dataset_filepath=results/consistent_unique_datasets/Devign.csv 
       --output_filepath=filtered_devign.csv --min_length=20 --max_length=1024
     """
-    data = _filter_by_size(data_filepath, max, min)
+    data = _filter_by_size(data_filepath, 'Function', max, min)
     data.to_csv(output_filepath, mode='w', index=False, header=True)
     print(f'Saved {len(data)} samples to {output_filepath}')
 
@@ -250,7 +269,7 @@ def make_jsonl_dataset(data_filepath, output_filepath, exclude_from_tests='', ma
     test = test.iloc[np.random.permutation(len(test))]  # shuffle rows
 
     # load the dataset
-    data = _filter_by_size(data_filepath, max, min)
+    data = _filter_by_size(data_filepath, 'Function', max, min)
 
     # Important! Make the dataset balanced
     data.iloc[np.random.permutation(len(data))]  # shuffle rows
@@ -397,15 +416,12 @@ def _openai_modify_code(role, code, model, logger, max_delta=200):
         'response_tokens': response_tokens,
     }
 
-def openai_fix_vulns(dataset_filepath, output_filepath, model, max=9999999, min=0):
+def openai_fix_vulns(dataset_filepath, output_filepath, model, codekey='Function', max=9999999, min=0):
     """
     Example:
-    python scripts.py --script openai_fix_vulns\
-        --dataset_filepath='results/custom_datasets/test_set.csv'\
-        --output_filepath='results/custom_datasets/test_set_clean.csv'\
-        --model='gpt-4-turbo' --max 2048 --min 0
+    python scripts.py --script openai_fix_vulns --dataset_filepath='results/custom_datasets/test_set.csv' --output_filepath='results/custom_datasets/test_set_clean.csv' --model='gpt-4-turbo' --max 2048 --min 0
     """
-    data = _filter_by_size(dataset_filepath, 2048, 0)
+    data = _filter_by_size(dataset_filepath, codekey, 2048, 0)
     # turn into a list of dicts
     data_l = data.to_dict(orient='records')
     logger = _make_logger(logging.INFO, output_filepath+'-logs.txt')
@@ -413,15 +429,27 @@ def openai_fix_vulns(dataset_filepath, output_filepath, model, max=9999999, min=
     response_tokens = 0    
 
     for i in range(0,len(data_l)):
-        if data_l[i]['Vulnerable'] == 0:
-            code = data_l[i]["Function"]
+        if hasattr(data_l[i], 'Vulnerable'):
+            vulnerable = data_l[i]['Vulnerable']
+        else:
+            vulnerable = data_l[i]['target']
+
+        if vulnerable == 0:
+            code = data_l[i][codekey]
             clean_code_dict = _openai_modify_code(CLEAN_ROLE, code, model, logger)
-            data_l[i]["Function"] = clean_code_dict['code']
+            data_l[i][codekey] = clean_code_dict['code']
             prompt_tokens += clean_code_dict['prompt_tokens']
             response_tokens += clean_code_dict['response_tokens']
 
     data = pd.DataFrame(data_l)
-    data.to_csv(output_filepath, mode='w', index=False, header=True)
+    filetype = re.search('\w+$', output_filepath)[0]
+    if filetype == 'csv':
+        data.to_csv(output_filepath, mode='w', index=False, header=True)
+    elif filetype == 'jsonl':
+        data.to_json(path_or_buf=output_filepath, orient='records', lines=True)
+    elif filetype == 'json':
+        data.to_json(path_or_buf=output_filepath, orient='records')
+
     logger.info(f'Task complete, {len(data)} functions written to {output_filepath}, cost {prompt_tokens} prompt tokens and {response_tokens} response tokens {model}')
 
 def _make_logger(level, output_filepath=''):
@@ -446,24 +474,14 @@ def openai_run_tests(test_filepath, output_filepath, model="gpt-3.5-turbo", role
     """
     Example:
     python scripts.py --script openai_run_tests\
-        --dataset_filepath='results/custom_datasets/test_set.csv'\
-        --output_filepath='results/testing_runs/gpt-4-turbo_2024-04-25-03'\
-        --model='gpt-3.5-turbo'\
-        --model_role="You are an experienced cyber security expert and skilled coder. "\
-"A function written in C is provided, it may contain one of the top "\
-"Mitre CWE vulnerabilities, it may not. You will carefully inspect the code "\
-"and determine if the code has a serious vulnerability. "\
-"Only output a properly formatted JSON object! "\
-"The first field is 'analysis', you will provide a careful analysis of whether or not this code "\
-"has a serious vulnerability. If it has a vulnerability, has it "\
-"already been mitigated in the code? "\
-"The second field is 'vulnerable', it is a binary field. It must be "\
-"either 1 if the code has a serious vulnerability, "\
-"or 0 if it doesn't."
+        --dataset_filepath='results/custom_datasets/bigvul_clean_test/test.jsonl'\
+        --output_filepath='results/testing_runs/gpt-4-turbo_2024-05-04-14.txt'\
+        --model='gpt-4-turbo'\
+        --model_role="You are an experienced cyber security expert and skilled coder. A function written in C is provided, it may contain a common Mitre CWE vulnerabilities, it may not. You will carefully inspect the code and determine if the code has a serious vulnerability. Only output a properly formatted JSON object! The first field is 'analysis', you will provide a short analysis of whether or not this code has a serious vulnerability. Do not consider minor issues such as weak encryption. If the outcome of a potential problem is not a security vulnerability, ignore it. Do not be paranoid. The second field is 'check', you will provide a careful analysis of whether any vulnerabilities described seem to be made safe by the code, or are made safe because of the safe return values of library functions, or do not result in an actual security vulnerability. 'not applicable' only if you determine there are no serious vulnerabilities. The third field is 'vulnerable', it is a binary field. It must be either 1 if the code has a serious vulnerability, or 0 if it doesn't."
     """
+    data = _get_dataframe_from_filepath(test_filepath)
     logger = _make_logger(logging.INFO, output_filepath)
     client = OpenAI()
-    data = pd.read_csv(test_filepath)
     data = data.sample(frac=1) # shuffle
     prompt_tokens = 0
     completion_tokens = 0
@@ -476,10 +494,19 @@ def openai_run_tests(test_filepath, output_filepath, model="gpt-3.5-turbo", role
         'fn': 0,
     }
     logger.info(f'The role is {role}, the prompt is just the code')
+    code_column = 'Function'
+    if not 'Function' in data.columns:
+        code_column = 'code'
+    vuln_column = 'Vulnerable'
+    if not 'Vulnerable' in data.columns:
+        vuln_column = 'target'
+    id_column = 'ID'
+    if not 'ID' in data.columns:
+        id_column = 'idx'
 
     for i in range(0,len(data)):
-        code = data.iloc[i]["Function"]
-        vulnerable = int(data.iloc[i]["Vulnerable"])
+        code = data.iloc[i][code_column]
+        vulnerable = int(data.iloc[i][vuln_column])
         max_attempts = 3
         attempts = 0
         completion = {}
@@ -498,8 +525,8 @@ def openai_run_tests(test_filepath, output_filepath, model="gpt-3.5-turbo", role
                 result = json.loads(completion.choices[0].message.content)
                 completion_tokens += completion.usage.completion_tokens
                 prompt_tokens += completion.usage.prompt_tokens
-                logger.info(f'***Item {i}, {data.iloc[i]["ID"]} ({completion.usage})***')
-                logger.info(f'******* {vulnerable}, {code}')
+                logger.info(f'***Item {i}, {data.iloc[i][id_column]} ({completion.usage})***')
+                logger.info(f'****{data.iloc[i][code_column]}')
                 logger.info(result)
                 predicted = int(result['vulnerable'])
 
@@ -508,8 +535,8 @@ def openai_run_tests(test_filepath, output_filepath, model="gpt-3.5-turbo", role
                     raise ValueError(f'Result must not have been properly formatted. ' \
                                      f'predicted is {predicted}, completion is {completion}')
 
-                logger.info(f'For {data.iloc[i]["ID"]} the predicted is {predicted}, the value is supposed ' \
-                      f'to be {vulnerable}')
+                logger.info(f'For {data.iloc[i][id_column]} the predicted is {predicted}, the value is ' \
+                      f'labeled as {vulnerable}')
                 sample_vulnerability.append(vulnerable)
                 predicted_vulnerability.append(predicted)
                 logger.info(list(zip(sample_vulnerability, predicted_vulnerability)))
@@ -523,7 +550,7 @@ def openai_run_tests(test_filepath, output_filepath, model="gpt-3.5-turbo", role
                     results['fn'] +=1
                 attempts = max_attempts
             except Exception as e:
-                logger.error(f'Failed Item {i}, {data.iloc[i]["ID"]} attempt #{attempts}')
+                logger.error(f'Failed Item {i}, {data.iloc[i][id_column]} attempt #{attempts}')
                 logger.error(f'completion object: {completion}')
                 logger.error(repr(e))
     
@@ -533,6 +560,7 @@ def openai_run_tests(test_filepath, output_filepath, model="gpt-3.5-turbo", role
     logger.info(f'Results: {list(zip(sample_vulnerability, predicted_vulnerability))}')
     logger.info(f'Detailed Results: {results}')
     logger.info(f'F1 score: {f1_score(sample_vulnerability, predicted_vulnerability)}')
+    logger.info(f'Accuracy (ACC): {(results["tp"] + results["tn"])/len(predicted_vulnerability)}')
 
 def openai_make_vulns(source, target, model, key, max=99999999, min=0):
     """
@@ -600,7 +628,7 @@ def openai_make_vulns(source, target, model, key, max=99999999, min=0):
         sample = code_list[i][0]
         uid = code_list[i][1]
         # the list of vulnerabilities will change as we get enough examples of specific vulnerabilties
-        role = f"You are an elite cyber security expert and coder. You are creating vulnerabilities in C functions to use in a dataset to train a cybersecurity model. A function written in C is provided. Analyze the code and determine which, if any, of a list of vulnerabilies could be introduced into the code with minimal code changes, as if a medium skilled developer did it accidentally. Only return a properly formatted JSON object! There will be two fields. The first will be 'analysis' with a very short explanation of your choice. The second will be 'vulnerability' and it will include only a CWE identifier, like 'CWE-000'. Only choose from the vulnerabilties in this list, or if no vulnerability can be added to this code in a natural way, return 'None' instead. Be creative about how you would add one of the vulnerabilities to the code. \nPotential vulnerabilities: {list(vuln_types.keys())}"
+        role = f"You are an elite cyber security expert and coder. You are creating vulnerabilities in C functions to use in a dataset to train a cybersecurity model. A function written in C is provided. Analyze the code and determine which, if any, of a list of vulnerabilities could be introduced into the code with minimal code changes, as if a medium skilled developer did it accidentally. Only return a properly formatted JSON object! There will be two fields. The first will be 'analysis' with a very short explanation of your choice. The second will be 'vulnerability' and it will include only a CWE identifier, like 'CWE-000'. Only choose from the vulnerabilties in this list, or if no vulnerability can be added to this code in a natural way, return 'None' instead. Be creative about how you would add one of the vulnerabilities to the code. \nPotential vulnerabilities: {list(vuln_types.keys())}"
         attempts = 0
         time_in_ms = int(time.time() * 1000)
         max_attempts = 1
@@ -742,6 +770,29 @@ def openai_make_vulns(source, target, model, key, max=99999999, min=0):
     logger.info(f'Completed generating the dataset at sample index {sample_index} out of {len(code_list)} samples. Created {num_success} safe/vulnerable code pairs, saved at {target}. Used {prompt_tokens} prompt tokens and {response_tokens} response tokens')
     logger.info(vuln_counts)
 
+def read_files_to_dataset(source_path):
+    """
+    Turn a bunch of c files that are labeled as clean or not into a .jsonl test set,
+    remove whitespace and comments
+    
+    Example:
+    python scripts.py --script read_files_to_dataset --dataset_filepath "/mnt/c/thesis_backups/Datasets/linux_bugs_vuln_detection-main/linux_bugs_vuln_detection-main/TestCode"
+    """
+    files = (Path().cwd() / source_path).glob('*.c')
+    file_list = list(files)
+    with open(source_path + '/clean_test.jsonl', 'a') as f:
+        for file in file_list:
+            target = 1
+            if file.name.endswith('CLEAN.c'):
+                target = 0
+            sample = {
+                'idx':file.name[:-2], # remove .c at the end of the file
+                'target': target,
+                'code':  _normalize_c_code(file.read_text()),
+            }
+            f.write(json.dumps(sample) + "\n")
+
+    print(f'files written to {source_path + "/clean_test.jsonl"}')
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -772,6 +823,7 @@ if __name__ == '__main__':
         'openai_fix_vulns': openai_fix_vulns,
         'openai_run_tests': openai_run_tests,
         'openai_make_vulns': openai_make_vulns,
+        'read_files_to_dataset': read_files_to_dataset,
     }
 
 
@@ -820,7 +872,7 @@ if __name__ == '__main__':
             raise ValueError(f'--dataset_filepath must be included with {args.script}')
         if args.model == "":
             raise ValueError(f'--model must be included with {args.script}')
-        openai_fix_vulns(args.dataset_filepath, args.output_filepath, args.model, args.max_length, args.min_length)
+        openai_fix_vulns(args.dataset_filepath, args.output_filepath, args.model, args.key, args.max_length, args.min_length)
     elif (args.script == 'openai_run_tests'):
         openai_run_tests(args.dataset_filepath, args.output_filepath, args.model, args.model_role)
     elif(args.script == 'openai_make_vulns'):
@@ -833,6 +885,10 @@ if __name__ == '__main__':
         if args.key == "":
             raise ValueError(f'--key must be included with {args.script}, to find the code in the file')
         openai_make_vulns(args.dataset_filepath, args.output_filepath, args.model, args.key, args.max_length, args.min_length)
+    elif(args.script == 'read_files_to_dataset'):
+        if args.dataset_filepath == "":
+            raise ValueError(f'--dataset_filepath must be included with {args.script}')
+        read_files_to_dataset(args.dataset_filepath)
     else:
         raise ValueError(f'--script is {args.script}, but must be one of: {list(scripts.keys())}')
 
